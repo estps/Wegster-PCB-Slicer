@@ -12,7 +12,6 @@ hidden = [
     "exporter",
     "gcode_verify",
     "gcode_reader",
-    "dxf_io",
     "tool_db",
     "sqlite_read",
     "updater",
@@ -57,7 +56,7 @@ a = Analysis(
     hookspath=[],
     runtime_hooks=[],
     excludes=excludes,
-    noarchive=False,
+    noarchive=True,
 )
 
 pyz = PYZ(a.pure)

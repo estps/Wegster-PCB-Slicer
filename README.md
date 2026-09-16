@@ -15,11 +15,6 @@ the board.
 - **Gerber + Excellon parsing** — reads `.zip` archives from KiCad, EasyEDA,
   Altium and friends. Auto-detects front/back copper, board outline, silkscreen,
   solder mask and drill files.
-- **DXF import** — open a `.dxf` (or a folder/zip containing one) and it maps
-  layers to roles by name, turning open paths into stroked copper using a
-  configurable line width, closed shapes into regions, and circles into drill
-  holes. Handles `LWPOLYLINE`/`POLYLINE` bulges, arcs, ellipses, splines and
-  block inserts.
 - **Tool database** — reads your Vectric Cut2D `.vtdb` file, lists every tool,
   and **auto-selects** the isolation, rub-out, cut-out and silkscreen tools by
   measuring the board's real copper clearance. Every dropdown stays editable, so
@@ -59,8 +54,7 @@ python -m venv .venv
 .venv\Scripts\python run.py
 ```
 
-Then: **Open Gerber…** → pick your `.zip` or `.dxf` → check the preview →
-**Export Files…**
+Then: **Open Gerber…** → pick your `.zip` → check the preview → **Export Files…**
 
 The tool database is found automatically in `Documents\Cut2D_tools_database.vtdb`.
 Point at a different one by setting `WEGSTR_TOOL_DB`:
@@ -85,8 +79,8 @@ python backend/main.py --out board --passes 3      # write G-code
 python backend/main.py --out board --bottom --silkscreen --alignment-holes
 python backend/main.py --list-tools                # dump the tool database
 python backend/main.py --use-tool-db --out board   # auto-select tools, then cut
-python backend/main.py --zip drawing.dxf --dxf-width 0.25 --out board
 python backend/test_pipeline.py                    # run the test suite
+python run.py --self-test                          # end-to-end check of a build
 ```
 
 ## Output
@@ -113,8 +107,6 @@ what to do at every step — including exactly how to flip the board.
 backend/          pure Python, no UI dependency
   gerber_io.py      RS-274X + Excellon parser (aperture macros, arcs,
                     regions, polarity, step-and-repeat)
-  dxf_io.py         self-contained ASCII DXF reader (polylines with bulges,
-                    arcs, ellipses, splines, inserts) and role mapping
   sqlite_read.py    minimal read-only SQLite file reader (no sqlite3.dll)
   pcb_engine.py     CAM geometry: isolation, rub-out, tabs, drilling, depth
   tool_db.py        Vectric .vtdb reader, clearance measurement, tool choice
@@ -151,13 +143,18 @@ always let you choose something else.
 `pcb-tools` (the `gerber` package) is unmaintained and dies on Python 3.11+
 because it still opens files in the `'rU'` mode that was removed. `pygerber`
 doesn't expose raw shapely geometry, which is what the CAM math needs. So the
-Gerber and Excellon parsers here are self-contained. The DXF reader and the
-SQLite reader for the tool database are self-contained too, so the only runtime
-dependencies stay `numpy`, `shapely` and `PySide6`.
+Gerber and Excellon parsers here are self-contained. The SQLite reader for the
+tool database is self-contained too, so the only runtime dependencies stay
+`numpy`, `shapely` and `PySide6`.
 
 The SQLite reader is not an accident either: bundling `sqlite3.dll` makes
 Windows **Smart App Control** refuse to launch the built `.exe`, so the `.vtdb`
 file is parsed directly instead.
+
+The build also sets `noarchive=True`, which stores the Python modules beside the
+executable instead of inside it. The `.exe` becomes a ~350 KB bootloader that
+Windows is happy to run, and `--self-test` gives you a way to confirm a built
+copy actually parses a board and plans toolpaths before you trust it.
 
 ## Safety
 

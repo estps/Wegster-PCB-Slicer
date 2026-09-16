@@ -23,7 +23,6 @@ _KEY_PROFILE = "job/profile"
 _KEY_VIEWER = "viewer"
 _KEY_PANEL_HIDDEN = "view/panel_hidden"
 _KEY_ARCHIVE = "job/last_archive"
-_KEY_DXF_WIDTH = "job/dxf_width"
 
 
 def _settings() -> QSettings:
@@ -146,19 +145,6 @@ class Preferences:
             return str(value) if value else None
         except Exception:
             return None
-
-    def save_dxf_width(self, width: float) -> None:
-        try:
-            self.settings.setValue(_KEY_DXF_WIDTH, float(width))
-            self.settings.sync()
-        except Exception:
-            pass
-
-    def restore_dxf_width(self) -> float:
-        try:
-            return float(self.settings.value(_KEY_DXF_WIDTH, 0.2))
-        except (TypeError, ValueError):
-            return 0.2
 
     def clear(self) -> None:
         try:

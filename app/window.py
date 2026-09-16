@@ -117,14 +117,11 @@ class MainWindow(QMainWindow):
         self.tool_db: ToolDatabase | None = None
         self.tool_combos: dict[str, QComboBox] = {}
         self._tools_auto_applied = False
-        self.dxf_width = 0.2
-        self.dxf_roles: dict[str, str] = {}
         self._update_info: UpdateInfo | None = None
 
         self.preferences = Preferences()
         self.preferences.restore_job(self.config, self.profile)
         self._panel_hidden = self.preferences.restore_panel_hidden()
-        self.dxf_width = self.preferences.restore_dxf_width()
         self._load_tool_db()
 
         self._autosave = QTimer(self)
@@ -337,6 +334,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(_vline())
 
         self.open_button = QPushButton("Open Gerber…")
+        self.open_button.setToolTip("Open a Gerber .zip archive")
         self.open_button.clicked.connect(self._choose_archive)
         layout.addWidget(self.open_button)
 
@@ -763,14 +761,6 @@ class MainWindow(QMainWindow):
             2, " mm",
         )
 
-        card.add_section_label("DXF import")
-        self._bind_slider(
-            card, "Open path width", 0.05, 1.0,
-            lambda: self.dxf_width,
-            self._set_dxf_width,
-            2, " mm",
-        )
-
     def _load_tool_db(self) -> None:
         try:
             self.tool_db = load_tool_db()
@@ -834,10 +824,6 @@ class MainWindow(QMainWindow):
         self._refresh_widgets()
         self._debounce.start()
         self._schedule_autosave()
-
-    def _set_dxf_width(self, value: float) -> None:
-        self.dxf_width = float(value)
-        self.preferences.save_dxf_width(self.dxf_width)
 
     def _auto_select_tools(self, force: bool = False) -> None:
         if self.tool_db is None:
@@ -1378,11 +1364,7 @@ class MainWindow(QMainWindow):
     def _choose_archive(self) -> None:
         start = str(self.archive.parent) if self.archive else str(Path.home())
         path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Open PCB artwork",
-            start,
-            "PCB artwork (*.zip *.dxf);;Gerber archive (*.zip);;"
-            "DXF drawing (*.dxf);;All files (*)",
+            self, "Open Gerber archive", start, "Gerber archive (*.zip);;All files (*)"
         )
         if path:
             self._load(Path(path))
@@ -1396,11 +1378,7 @@ class MainWindow(QMainWindow):
         try:
             if self.project is not None:
                 self.project.cleanup()
-            self.project = load_project(
-                path,
-                dxf_width=self.dxf_width,
-                dxf_roles=self.dxf_roles or None,
-            )
+            self.project = load_project(path)
         except Exception as exc:
             self.project = None
             self.status_label.setText(f"Error: {exc}")

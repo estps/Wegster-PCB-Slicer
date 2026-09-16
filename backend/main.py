@@ -191,29 +191,17 @@ class Session:
         self.config = SlicerConfig()
         self.project: PcbProject | None = None
         self.project_path: str | None = None
-        self._load_key: tuple[Any, ...] | None = None
         self.tool_db_path: str | None = None
         self._tool_db: ToolDatabase | None = None
 
-    def load(
-        self,
-        path: str,
-        dxf_width: float | None = None,
-        dxf_roles: dict[str, str] | None = None,
-    ) -> PcbProject:
+    def load(self, path: str) -> PcbProject:
         resolved = str(Path(path).expanduser())
-        key = (resolved, dxf_width, tuple(sorted((dxf_roles or {}).items())))
-        if self.project is not None and self._load_key == key:
+        if self.project is not None and self.project_path == resolved:
             return self.project
         if self.project is not None:
             self.project.cleanup()
-        self.project = load_project(
-            resolved,
-            dxf_width=0.2 if dxf_width is None else float(dxf_width),
-            dxf_roles=dxf_roles,
-        )
+        self.project = load_project(resolved)
         self.project_path = resolved
-        self._load_key = key
         return self.project
 
     def require_project(self) -> PcbProject:
@@ -242,11 +230,7 @@ class Session:
 
 def _load_from_params(session: Session, params: dict[str, Any]) -> PcbProject:
     path = params.get("path") or session.project_path or str(DEFAULT_ARCHIVE)
-    return session.load(
-        path,
-        dxf_width=params.get("dxf_width"),
-        dxf_roles=params.get("dxf_roles"),
-    )
+    return session.load(path)
 
 
 def do_load(session: Session, params: dict[str, Any]) -> dict[str, Any]:
@@ -488,7 +472,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--zip",
         "-z",
         default=str(DEFAULT_ARCHIVE),
-        help="Gerber .zip, a .dxf file, or a folder containing either",
+        help="Gerber .zip archive or a folder containing one",
     )
     parser.add_argument("--out", "-o", default=None, help="Output .nc/.gcode path")
     parser.add_argument("--ipc", action="store_true", help="Run the JSON IPC server on stdio")
@@ -514,12 +498,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--list-tools",
         action="store_true",
         help="List the tools in the database, with recommendations, and exit",
-    )
-    tool.add_argument(
-        "--dxf-width",
-        type=float,
-        default=None,
-        help="Line width applied to open DXF paths (mm, default 0.2)",
     )
 
     iso = parser.add_argument_group("isolation")
@@ -796,7 +774,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.info:
             session = Session()
             try:
-                session.load(args.zip, dxf_width=args.dxf_width)
+                session.load(args.zip)
                 print_info(project_summary(session.require_project(), session.profile))
             finally:
                 session.close()
@@ -809,7 +787,7 @@ def main(argv: list[str] | None = None) -> int:
             database = session.tool_db(args.tool_db)
             gap = None
             try:
-                project = load_project(args.zip, dxf_width=args.dxf_width)
+                project = load_project(args.zip)
             except (GerberError, FileNotFoundError):
                 project = None
             if project is not None:
@@ -831,7 +809,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  {role:<11} {recommendation['reasons'][role]}")
 
         if args.preview:
-            project = load_project(args.zip, dxf_width=args.dxf_width)
+            project = load_project(args.zip)
             try:
                 plan = plan_toolpaths(project, config)
                 payload = plan.to_dict()
@@ -841,7 +819,7 @@ def main(argv: list[str] | None = None) -> int:
                 project.cleanup()
             return 0
 
-        project = load_project(args.zip, dxf_width=args.dxf_width)
+        project = load_project(args.zip)
         try:
             plan = plan_toolpaths(project, config)
             stem = Path(args.zip).stem

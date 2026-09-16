@@ -1,0 +1,6 @@
+numpy>=1.24
+shapely>=2.0
+PySide6>=6.6
+
+# Optional, only needed to build a standalone executable:
+# pyinstaller>=6.0

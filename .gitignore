@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Build output
+build/
+dist/
+packaging/*.spec.bak
+
+# Generated G-code and job output
+*.nc
+*.gcode
+*.tap
+*_milling/
+out_pkg/
+
+# Editor / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

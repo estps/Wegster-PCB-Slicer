@@ -18,6 +18,15 @@ from pcb_engine import (
     build_board,
     plan_toolpaths,
 )
+from tool_db import (
+    ToolDbError,
+    ToolDatabase,
+    apply_role,
+    estimate_min_clearance,
+    find_tool_db,
+    load_tool_db,
+    recommend_tools,
+)
 from wegstr_gcode import (
     GCodeError,
     MachineProfile,
@@ -26,11 +35,15 @@ from wegstr_gcode import (
     estimate_runtime,
 )
 
+VERSION = "1.1.0"
+
 DEFAULT_ARCHIVE = Path(
     r"C:\Users\charles\Downloads\Gerber_Turretv2_PCB_Turretv2_2026-09-15.zip"
 )
 
-TOOL_FIELDS = ("isolation_tool", "rubout_tool", "cutout_tool")
+TOOL_FIELDS = ("isolation_tool", "rubout_tool", "cutout_tool", "silkscreen_tool")
+
+TOOL_ROLES = ("isolation", "rubout", "cutout", "silkscreen")
 
 
 def _coerce(current: Any, value: Any) -> Any:
@@ -178,21 +191,47 @@ class Session:
         self.config = SlicerConfig()
         self.project: PcbProject | None = None
         self.project_path: str | None = None
+        self._load_key: tuple[Any, ...] | None = None
+        self.tool_db_path: str | None = None
+        self._tool_db: ToolDatabase | None = None
 
-    def load(self, path: str) -> PcbProject:
+    def load(
+        self,
+        path: str,
+        dxf_width: float | None = None,
+        dxf_roles: dict[str, str] | None = None,
+    ) -> PcbProject:
         resolved = str(Path(path).expanduser())
-        if self.project is not None and self.project_path == resolved:
+        key = (resolved, dxf_width, tuple(sorted((dxf_roles or {}).items())))
+        if self.project is not None and self._load_key == key:
             return self.project
         if self.project is not None:
             self.project.cleanup()
-        self.project = load_project(resolved)
+        self.project = load_project(
+            resolved,
+            dxf_width=0.2 if dxf_width is None else float(dxf_width),
+            dxf_roles=dxf_roles,
+        )
         self.project_path = resolved
+        self._load_key = key
         return self.project
 
     def require_project(self) -> PcbProject:
         if self.project is None:
             raise SlicerError("No project loaded. Send a 'load' request first.")
         return self.project
+
+    def tool_db(self, path: str | None = None, reload: bool = False) -> ToolDatabase:
+        if path:
+            resolved = str(Path(path).expanduser())
+            if reload or self._tool_db is None or self.tool_db_path != resolved:
+                self._tool_db = load_tool_db(resolved)
+                self.tool_db_path = resolved
+            return self._tool_db
+        if self._tool_db is None or reload:
+            self._tool_db = load_tool_db()
+            self.tool_db_path = str(self._tool_db.path) if self._tool_db.path else None
+        return self._tool_db
 
     def close(self) -> None:
         if self.project is not None:
@@ -201,14 +240,22 @@ class Session:
             self.project_path = None
 
 
+def _load_from_params(session: Session, params: dict[str, Any]) -> PcbProject:
+    path = params.get("path") or session.project_path or str(DEFAULT_ARCHIVE)
+    return session.load(
+        path,
+        dxf_width=params.get("dxf_width"),
+        dxf_roles=params.get("dxf_roles"),
+    )
+
+
 def do_load(session: Session, params: dict[str, Any]) -> dict[str, Any]:
-    path = params.get("path") or str(DEFAULT_ARCHIVE)
-    session.load(path)
+    _load_from_params(session, params)
     return project_summary(session.require_project(), session.profile)
 
 
 def do_plan(session: Session, params: dict[str, Any]) -> dict[str, Any]:
-    session.load(params.get("path") or session.project_path or str(DEFAULT_ARCHIVE))
+    _load_from_params(session, params)
     session.config = config_from_dict(params.get("config"), session.config)
     session.profile = profile_from_dict(params.get("profile"), session.profile)
 
@@ -221,7 +268,7 @@ def do_plan(session: Session, params: dict[str, Any]) -> dict[str, Any]:
 
 
 def do_export(session: Session, params: dict[str, Any]) -> dict[str, Any]:
-    session.load(params.get("path") or session.project_path or str(DEFAULT_ARCHIVE))
+    _load_from_params(session, params)
     session.config = config_from_dict(params.get("config"), session.config)
     session.profile = profile_from_dict(params.get("profile"), session.profile)
 
@@ -252,15 +299,116 @@ def do_defaults(session: Session, params: dict[str, Any]) -> dict[str, Any]:
         value = getattr(session.config, field_info.name)
         config[field_info.name] = value.to_dict() if isinstance(value, ToolSpec) else value
     return {
+        "version": VERSION,
         "config": config,
         "profile": session.profile.to_dict(),
         "tools": {
             "isolation": session.config.isolation_tool.to_dict(),
             "rubout": session.config.rubout_tool.to_dict(),
             "cutout": session.config.cutout_tool.to_dict(),
+            "silkscreen": session.config.silkscreen_tool.to_dict(),
         },
+        "tool_db": _tool_payload(session, {}),
         "default_archive": str(DEFAULT_ARCHIVE),
         "archive_exists": DEFAULT_ARCHIVE.exists(),
+    }
+
+
+def _min_gap(session: Session, params: dict[str, Any]) -> float | None:
+    explicit = params.get("min_gap")
+    if explicit is not None:
+        try:
+            return float(explicit)
+        except (TypeError, ValueError):
+            return None
+    project = session.project
+    if project is None:
+        return None
+    for layer in project.layers:
+        if layer.layer_type is LayerType.TOP_COPPER and layer.geometry is not None:
+            return estimate_min_clearance(layer.geometry)
+    for layer in project.layers:
+        if layer.layer_type.is_copper and layer.geometry is not None:
+            return estimate_min_clearance(layer.geometry)
+    return None
+
+
+def _tool_payload(session: Session, params: dict[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "available": False,
+        "path": None,
+        "found": None,
+        "error": None,
+    }
+    try:
+        database = session.tool_db(params.get("path"), bool(params.get("reload")))
+    except ToolDbError as exc:
+        found = find_tool_db()
+        payload["found"] = str(found) if found else None
+        payload["error"] = str(exc)
+        return payload
+
+    depth = params.get("isolation_depth")
+    if depth is None:
+        depth = session.config.isolation_depth
+    recommendation = recommend_tools(
+        database,
+        isolation_depth=float(depth or 0.05),
+        min_gap=_min_gap(session, params),
+    )
+
+    payload.update(database.to_dict())
+    payload["available"] = True
+    payload["found"] = str(database.path) if database.path else None
+    payload["recommended"] = recommendation["keys"]
+    payload["reasons"] = recommendation["reasons"]
+    payload["min_gap"] = recommendation["min_gap"]
+    payload["roles"] = recommendation["roles"]
+
+    if params.get("apply"):
+        for role, key in recommendation["keys"].items():
+            apply_role(session.config, role, database.by_key(key))
+        payload["applied"] = {
+            role: getattr(session.config, f"{role}_tool").to_dict()
+            for role in TOOL_ROLES
+            if hasattr(session.config, f"{role}_tool")
+        }
+    return payload
+
+
+def do_tools(session: Session, params: dict[str, Any]) -> dict[str, Any]:
+    if params.get("project"):
+        session.load(str(params["project"]))
+    return _tool_payload(session, params)
+
+
+def do_select_tool(session: Session, params: dict[str, Any]) -> dict[str, Any]:
+    role = str(params.get("role", ""))
+    if role not in TOOL_ROLES:
+        raise SlicerError(f"Unknown tool role {role!r}. Known: {list(TOOL_ROLES)}")
+
+    database = session.tool_db(params.get("path"), bool(params.get("reload")))
+    key = params.get("key")
+    tool = database.by_key(str(key)) if key else None
+    if key and tool is None:
+        raise SlicerError(f"Tool {key!r} is not in {database.path}")
+
+    if tool is None:
+        recommendation = recommend_tools(
+            database,
+            isolation_depth=float(
+                params.get("isolation_depth") or session.config.isolation_depth
+            ),
+            min_gap=_min_gap(session, params),
+        )
+        tool = database.by_key(recommendation["keys"].get(role))
+
+    apply_role(session.config, role, tool)
+    attribute = f"{role}_tool"
+    return {
+        "role": role,
+        "tool": tool.to_dict() if tool else None,
+        "config": getattr(session.config, attribute).to_dict(),
     }
 
 
@@ -272,12 +420,14 @@ def do_validate(session: Session, params: dict[str, Any]) -> dict[str, Any]:
 
 
 def do_ping(session: Session, params: dict[str, Any]) -> dict[str, Any]:
-    return {"pong": True, "backend": "wegstr-slicer", "version": "1.0.0"}
+    return {"pong": True, "backend": "wegstr-slicer", "version": VERSION}
 
 
 COMMANDS = {
     "ping": do_ping,
     "defaults": do_defaults,
+    "tools": do_tools,
+    "select_tool": do_select_tool,
     "load": do_load,
     "plan": do_plan,
     "export": do_export,
@@ -318,7 +468,7 @@ def ipc_loop() -> int:
                     "error": str(exc),
                     "kind": type(exc).__name__,
                 }
-                if not isinstance(exc, (GerberError, SlicerError, GCodeError)):
+                if not isinstance(exc, (GerberError, SlicerError, GCodeError, ToolDbError)):
                     reply["traceback"] = traceback.format_exc()
             sys.stdout.write(json.dumps(reply) + "\n")
             sys.stdout.flush()
@@ -334,7 +484,12 @@ def build_parser() -> argparse.ArgumentParser:
         prog="wegstr-slicer",
         description="Generate Wegstr Light CNC G-code from a Gerber archive.",
     )
-    parser.add_argument("--zip", "-z", default=str(DEFAULT_ARCHIVE), help="Gerber .zip or folder")
+    parser.add_argument(
+        "--zip",
+        "-z",
+        default=str(DEFAULT_ARCHIVE),
+        help="Gerber .zip, a .dxf file, or a folder containing either",
+    )
     parser.add_argument("--out", "-o", default=None, help="Output .nc/.gcode path")
     parser.add_argument("--ipc", action="store_true", help="Run the JSON IPC server on stdio")
     parser.add_argument("--info", action="store_true", help="Print the layer report and exit")
@@ -349,6 +504,23 @@ def build_parser() -> argparse.ArgumentParser:
     tool.add_argument("--tool-tip", type=float, help="Isolation V-bit tip flat diameter (mm)")
     tool.add_argument("--tool-kind", choices=["vbit", "flat"], help="Isolation tool type")
     tool.add_argument("--cutout-diameter", type=float, help="Cut-out tool diameter (mm)")
+    tool.add_argument("--tool-db", default=None, help="Path to a Vectric .vtdb tool database")
+    tool.add_argument(
+        "--use-tool-db",
+        action="store_true",
+        help="Auto-select the isolation, rub-out, cut-out and silkscreen tools from the database",
+    )
+    tool.add_argument(
+        "--list-tools",
+        action="store_true",
+        help="List the tools in the database, with recommendations, and exit",
+    )
+    tool.add_argument(
+        "--dxf-width",
+        type=float,
+        default=None,
+        help="Line width applied to open DXF paths (mm, default 0.2)",
+    )
 
     iso = parser.add_argument_group("isolation")
     iso.add_argument("--passes", type=int, help="Number of isolation passes")
@@ -591,10 +763,40 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     try:
+        if args.list_tools:
+            session = Session()
+            payload = _tool_payload(session, {"path": args.tool_db})
+            if not payload.get("available"):
+                print(f"error: {payload.get('error')}", file=sys.stderr)
+                return 2
+            print(f"Database : {payload['path']}")
+            print(f"Machine  : {payload['machine']}")
+            print(f"Material : {payload['material']}")
+            print(f"Tools    : {payload['count']}")
+            print()
+            for group in payload["groups"]:
+                print(f"[{group['name']}]")
+                for tool in group["tools"]:
+                    extra = (
+                        f"{tool['angle']:.0f} deg" if tool["kind"] == "vbit"
+                        else f"{tool['diameter']:.3f} mm"
+                    )
+                    print(
+                        f"  {tool['name']:<26} {extra:<9} "
+                        f"feed {tool['feed_rate']:.0f} plunge {tool['plunge_rate']:.0f} "
+                        f"rpm {tool['spindle_speed']}"
+                    )
+                print()
+            print("Recommended")
+            for role, tool in payload["roles"].items():
+                name = tool["name"] if tool else "-"
+                print(f"  {role:<11} {name:<26} {payload['reasons'][role]}")
+            return 0
+
         if args.info:
             session = Session()
             try:
-                session.load(args.zip)
+                session.load(args.zip, dxf_width=args.dxf_width)
                 print_info(project_summary(session.require_project(), session.profile))
             finally:
                 session.close()
@@ -602,8 +804,34 @@ def main(argv: list[str] | None = None) -> int:
 
         config, profile = config_from_args(args)
 
+        if args.use_tool_db:
+            session = Session()
+            database = session.tool_db(args.tool_db)
+            gap = None
+            try:
+                project = load_project(args.zip, dxf_width=args.dxf_width)
+            except (GerberError, FileNotFoundError):
+                project = None
+            if project is not None:
+                try:
+                    for layer in project.layers:
+                        if layer.layer_type is LayerType.TOP_COPPER and layer.geometry is not None:
+                            gap = estimate_min_clearance(layer.geometry)
+                            break
+                finally:
+                    project.cleanup()
+            recommendation = recommend_tools(
+                database, isolation_depth=config.isolation_depth, min_gap=gap
+            )
+            for role, key in recommendation["keys"].items():
+                apply_role(config, role, database.by_key(key))
+            if gap is not None:
+                print(f"Measured copper clearance: {gap:.3f} mm")
+            for role, key in recommendation["keys"].items():
+                print(f"  {role:<11} {recommendation['reasons'][role]}")
+
         if args.preview:
-            project = load_project(args.zip)
+            project = load_project(args.zip, dxf_width=args.dxf_width)
             try:
                 plan = plan_toolpaths(project, config)
                 payload = plan.to_dict()
@@ -613,7 +841,7 @@ def main(argv: list[str] | None = None) -> int:
                 project.cleanup()
             return 0
 
-        project = load_project(args.zip)
+        project = load_project(args.zip, dxf_width=args.dxf_width)
         try:
             plan = plan_toolpaths(project, config)
             stem = Path(args.zip).stem
@@ -678,7 +906,7 @@ def main(argv: list[str] | None = None) -> int:
             project.cleanup()
         return 0
 
-    except (GerberError, SlicerError, GCodeError, FileNotFoundError) as exc:
+    except (GerberError, SlicerError, GCodeError, ToolDbError, FileNotFoundError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

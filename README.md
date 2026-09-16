@@ -15,6 +15,16 @@ the board.
 - **Gerber + Excellon parsing** — reads `.zip` archives from KiCad, EasyEDA,
   Altium and friends. Auto-detects front/back copper, board outline, silkscreen,
   solder mask and drill files.
+- **DXF import** — open a `.dxf` (or a folder/zip containing one) and it maps
+  layers to roles by name, turning open paths into stroked copper using a
+  configurable line width, closed shapes into regions, and circles into drill
+  holes. Handles `LWPOLYLINE`/`POLYLINE` bulges, arcs, ellipses, splines and
+  block inserts.
+- **Tool database** — reads your Vectric Cut2D `.vtdb` file, lists every tool,
+  and **auto-selects** the isolation, rub-out, cut-out and silkscreen tools by
+  measuring the board's real copper clearance. Every dropdown stays editable, so
+  you can override any choice by hand. The Wegstr feed, plunge and spindle
+  figures stored against each tool are used per-operation.
 - **Isolation milling** — single or multi-pass offset paths, with V-bit tip
   compensation so the cut width tracks the plunge depth.
 - **Rub-out / copper clearing** — optional removal of the unetched copper pour.
@@ -30,6 +40,8 @@ the board.
   the machine envelope before you ever hit cycle start.
 - **G-code viewer** — open any `.gcode`, scrub through it, and see rapids,
   plunges and tool changes with playback.
+- **Update check** — on launch it asks GitHub whether a newer release exists and
+  offers a download link. It never installs anything by itself.
 
 ## Requirements
 
@@ -47,7 +59,15 @@ python -m venv .venv
 .venv\Scripts\python run.py
 ```
 
-Then: **Open Gerber…** → pick your `.zip` → check the preview → **Export Files…**
+Then: **Open Gerber…** → pick your `.zip` or `.dxf` → check the preview →
+**Export Files…**
+
+The tool database is found automatically in `Documents\Cut2D_tools_database.vtdb`.
+Point at a different one by setting `WEGSTR_TOOL_DB`:
+
+```bash
+set WEGSTR_TOOL_DB=D:\CAM\my_tools.vtdb
+```
 
 To add it to the Start menu (per-user, no admin needed):
 
@@ -63,6 +83,9 @@ The backend also works headless:
 python backend/main.py --info                      # layer report
 python backend/main.py --out board --passes 3      # write G-code
 python backend/main.py --out board --bottom --silkscreen --alignment-holes
+python backend/main.py --list-tools                # dump the tool database
+python backend/main.py --use-tool-db --out board   # auto-select tools, then cut
+python backend/main.py --zip drawing.dxf --dxf-width 0.25 --out board
 python backend/test_pipeline.py                    # run the test suite
 ```
 
@@ -90,11 +113,16 @@ what to do at every step — including exactly how to flip the board.
 backend/          pure Python, no UI dependency
   gerber_io.py      RS-274X + Excellon parser (aperture macros, arcs,
                     regions, polarity, step-and-repeat)
+  dxf_io.py         self-contained ASCII DXF reader (polylines with bulges,
+                    arcs, ellipses, splines, inserts) and role mapping
+  sqlite_read.py    minimal read-only SQLite file reader (no sqlite3.dll)
   pcb_engine.py     CAM geometry: isolation, rub-out, tabs, drilling, depth
+  tool_db.py        Vectric .vtdb reader, clearance measurement, tool choice
   wegstr_gcode.py   Wegstr Light kinematics profile + G-code emitter
   exporter.py       multi-file export and the generated build guide
   gcode_verify.py   independent verifier (re-reads the emitted file)
   gcode_reader.py   independent parser for the viewer
+  updater.py        GitHub release check
   main.py           CLI + JSON IPC server
 
 app/              PySide6 desktop UI
@@ -107,12 +135,29 @@ app/              PySide6 desktop UI
 The verifier and the reader parse independently of the emitter on purpose — a
 bug in one can't hide a bug in the other.
 
+## Tool selection
+
+The tool database holds the real Wegstr tools with their cutting data (170 mm/min
+feed, 11000 rpm, and a step-down per tool). On load the slicer measures the
+smallest distance between separate copper nets — the clearance the isolation
+cutter has to fit through — and picks the widest tool that fits, preferring a
+flat end mill over a V-bit for speed. Rub-out gets the largest bit that still
+clears the traces; cut-out and silkscreen fall back to sensible 1.0 mm and 0.3 mm
+end mills. If no database is found it uses built-in defaults, and the dropdowns
+always let you choose something else.
+
 ## Why not `pcb-tools`?
 
 `pcb-tools` (the `gerber` package) is unmaintained and dies on Python 3.11+
 because it still opens files in the `'rU'` mode that was removed. `pygerber`
 doesn't expose raw shapely geometry, which is what the CAM math needs. So the
-Gerber and Excellon parsers here are self-contained.
+Gerber and Excellon parsers here are self-contained. The DXF reader and the
+SQLite reader for the tool database are self-contained too, so the only runtime
+dependencies stay `numpy`, `shapely` and `PySide6`.
+
+The SQLite reader is not an accident either: bundling `sqlite3.dll` makes
+Windows **Smart App Control** refuse to launch the built `.exe`, so the `.vtdb`
+file is parsed directly instead.
 
 ## Safety
 

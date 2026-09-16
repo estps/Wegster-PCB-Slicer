@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Iterable, Iterator, Sequence
+from typing import Any, Iterable, Iterator, Sequence
 
 import numpy as np
 import shapely
@@ -50,11 +50,24 @@ class ToolSpec:
     tip_diameter: float = 0.0
     angle: float = 30.0
 
+    feed_rate: float = 0.0
+    plunge_rate: float = 0.0
+    spindle_rpm: int = 0
+    stepdown: float = 0.0
+    stepover: float = 0.0
+    source: str = ""
+
     def radius_at_depth(self, depth: float) -> float:
         depth = abs(float(depth))
         if self.kind == "vbit":
             return self.tip_diameter / 2.0 + depth * math.tan(math.radians(self.angle / 2.0))
         return self.diameter / 2.0
+
+    def resolved_feeds(self, profile: Any) -> tuple[float, float, int]:
+        cut = self.feed_rate if self.feed_rate > 0 else profile.cut_feed
+        plunge = self.plunge_rate if self.plunge_rate > 0 else profile.plunge_feed
+        rpm = self.spindle_rpm if self.spindle_rpm > 0 else profile.spindle_rpm
+        return float(cut), float(plunge), int(rpm)
 
     def to_dict(self) -> dict:
         return {
@@ -63,6 +76,12 @@ class ToolSpec:
             "diameter": self.diameter,
             "tip_diameter": self.tip_diameter,
             "angle": self.angle,
+            "feed_rate": self.feed_rate,
+            "plunge_rate": self.plunge_rate,
+            "spindle_rpm": self.spindle_rpm,
+            "stepdown": self.stepdown,
+            "stepover": self.stepover,
+            "source": self.source,
         }
 
 

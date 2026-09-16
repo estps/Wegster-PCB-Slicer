@@ -22,6 +22,15 @@ from pcb_engine import (
     reflect_about_pin_axis,
     select_registration_holes,
 )
+from tool_db import (
+    ToolDbError,
+    apply_role,
+    estimate_min_clearance,
+    find_tool_db,
+    load_tool_db,
+    recommend_tools,
+)
+from updater import parse_version
 from wegstr_gcode import WEGSTR_LIGHT, emit_plan, estimate_runtime
 
 DEFAULT_ARCHIVE = Path(
@@ -622,6 +631,9 @@ def test_ipc(archive: Path) -> None:
             "cmd": "plan",
             "params": {"config": {"isolation_passes": 1, "rubout_enabled": False}},
         },
+        {"id": 6, "cmd": "defaults"},
+        {"id": 7, "cmd": "tools"},
+        {"id": 8, "cmd": "select_tool", "params": {"role": "cutout", "key": "nope"}},
     ]
     payload = "\n".join(json.dumps(r) for r in requests) + "\n"
 
@@ -653,6 +665,269 @@ def test_ipc(archive: Path) -> None:
     check(isinstance(first["polylines"][0]["points"][0], list), "polyline points are [x, y] pairs")
     check(result["summary"]["estimated_runtime"] != "", "plan includes a runtime estimate")
 
+    defaults = by_id[6]["result"]
+    check(defaults["version"].startswith("1."), f"defaults reports version {defaults['version']}")
+    check("tool_db" in defaults, "defaults includes the tool database section")
+    check(
+        set(defaults["tools"]) >= {"isolation", "rubout", "cutout", "silkscreen"},
+        "defaults lists every tool role",
+    )
+
+    tools = by_id[7]["result"]
+    if tools.get("available"):
+        check(tools["count"] > 0, f"tools command lists {tools['count']} tools")
+        check(bool(tools["recommended"]["isolation"]), "tools command recommends an isolation tool")
+    else:
+        print("  [skip] no tool database on this machine")
+
+    check(not by_id[8]["ok"], "selecting an unknown tool reports an error")
+
+
+def _write_sample_dxf(path: Path) -> None:
+    def g(code, value):
+        return f"{code}\n{value}\n"
+
+    def polyline(layer, points, closed=True, bulge=0.0):
+        text = g(0, "LWPOLYLINE") + g(8, layer) + g(90, len(points))
+        text += g(70, 1 if closed else 0)
+        for index, (x, y) in enumerate(points):
+            text += g(10, x) + g(20, y)
+            if index == 0 and bulge:
+                text += g(42, bulge)
+        return text
+
+    def line(layer, x1, y1, x2, y2):
+        return (
+            g(0, "LINE") + g(8, layer)
+            + g(10, x1) + g(20, y1) + g(11, x2) + g(21, y2)
+        )
+
+    def circle(layer, cx, cy, r):
+        return g(0, "CIRCLE") + g(8, layer) + g(10, cx) + g(20, cy) + g(40, r)
+
+    def arc(layer, cx, cy, r, a0, a1):
+        return (
+            g(0, "ARC") + g(8, layer) + g(10, cx) + g(20, cy)
+            + g(40, r) + g(50, a0) + g(51, a1)
+        )
+
+    entities = ""
+    entities += polyline("BoardOutline", [(0, 0), (50, 0), (50, 30), (0, 30)])
+    entities += polyline("TopCopper", [(5, 5), (45, 5)], closed=False)
+    entities += polyline("TopCopper", [(5, 10), (45, 10)], closed=False)
+    entities += line("TopCopper", 5, 5, 5, 25)
+    entities += line("TopCopper", 45, 5, 45, 25)
+    entities += polyline("TopCopper", [(10, 15), (20, 15), (20, 25), (10, 25)])
+    entities += polyline(
+        "TopCopper", [(25, 15), (35, 15), (35, 25), (25, 25)], bulge=0.4142
+    )
+    entities += arc("TopCopper", 40, 20, 3, 0, 180)
+    entities += circle("Drill", 12, 7, 0.5)
+    entities += circle("Drill", 25, 7, 0.4)
+    entities += circle("Drill", 38, 7, 0.75)
+    entities += line("Silkscreen", 5, 28, 45, 28)
+
+    text = (
+        g(0, "SECTION") + g(2, "HEADER") + g(9, "$INSUNITS") + g(70, 4) + g(0, "ENDSEC")
+        + g(0, "SECTION") + g(2, "TABLES")
+        + g(0, "TABLE") + g(2, "LAYER")
+        + g(0, "LAYER") + g(2, "BoardOutline") + g(70, 0) + g(370, 25)
+        + g(0, "LAYER") + g(2, "TopCopper") + g(70, 0) + g(370, 0)
+        + g(0, "LAYER") + g(2, "Drill") + g(70, 0) + g(370, 0)
+        + g(0, "LAYER") + g(2, "Silkscreen") + g(70, 0) + g(370, 0)
+        + g(0, "ENDTAB") + g(0, "ENDSEC")
+        + g(0, "SECTION") + g(2, "ENTITIES") + entities + g(0, "ENDSEC")
+        + g(0, "EOF")
+    )
+    path.write_text(text, encoding="utf-8")
+
+
+def test_dxf(tmp_dir: Path) -> None:
+    print("\n== DXF import ==")
+    path = tmp_dir / "sample_board.dxf"
+    _write_sample_dxf(path)
+
+    project = load_project(path)
+    try:
+        outline = project.layer(LayerType.EDGE_CUTS)
+        check(outline is not None, "DXF outline layer detected by name")
+        if outline is not None and outline.bounds is not None:
+            minx, miny, maxx, maxy = outline.bounds
+            check(
+                abs((maxx - minx) - 50.0) < 0.05 and abs((maxy - miny) - 30.0) < 0.05,
+                f"DXF outline measured {maxx - minx:.2f} x {maxy - miny:.2f} mm",
+            )
+
+        copper = project.layer(LayerType.TOP_COPPER)
+        check(copper is not None and copper.geometry.area > 0, "DXF copper geometry built")
+        check(project.layer(LayerType.TOP_SILK) is not None, "DXF silkscreen layer detected")
+
+        holes = project.all_holes
+        check(len(holes) == 3, f"DXF circles became {len(holes)} drill holes")
+        check(
+            sorted(round(h.diameter, 3) for h in holes) == [0.8, 1.0, 1.5],
+            "DXF drill diameters read from circle radii",
+        )
+
+        config = SlicerConfig()
+        config.mill_bottom = False
+        config.rubout_enabled = True
+        plan = plan_toolpaths(project, config)
+        kinds = {group.kind for group in plan.groups}
+        check("isolation" in kinds, "DXF copper produces isolation toolpaths")
+        check("cutout" in kinds, "DXF outline produces a board cut-out")
+        check("drill" in kinds, "DXF circles produce drilling")
+
+        program = emit_plan(plan, config, program_name="sample")
+        check(program.count("\n") > 100, "DXF plan emits G-code")
+    finally:
+        project.cleanup()
+
+
+def test_tool_db() -> None:
+    print("\n== Vectric tool database ==")
+    found = find_tool_db()
+    if found is None:
+        print("  [skip] no .vtdb tool database on this machine")
+        return
+
+    database = load_tool_db()
+    check(len(database) >= 5, f"loaded {len(database)} tools from {found.name}")
+    check(bool(database.machine), f"machine name read: {database.machine!r}")
+    check(
+        all(tool.kind in ("flat", "vbit") for tool in database),
+        "every tool maps to a flat or V-bit cutter",
+    )
+    check(
+        all(tool.name for tool in database),
+        "every tool has a display name",
+    )
+    vbits = database.vbits()
+    check(bool(vbits) and all(t.angle > 0 for t in vbits), "V-bits carry an included angle")
+    with_data = [t for t in database if t.feed_rate > 0]
+    check(bool(with_data), f"{len(with_data)} tools carry Wegstr cutting data")
+    check(
+        all(t.spindle_speed > 0 for t in with_data),
+        "cutting data includes spindle speeds",
+    )
+
+    fallback = recommend_tools(database)
+    check(
+        fallback["roles"]["isolation"] is not None,
+        "recommends an isolation tool without board data",
+    )
+
+    tight = recommend_tools(database, isolation_depth=0.05, min_gap=0.15)
+    iso = tight["roles"]["isolation"]
+    check(iso is not None, "recommends an isolation tool for a 0.15 mm clearance")
+    if iso is not None:
+        tool = database.by_key(tight["keys"]["isolation"])
+        check(
+            tool is not None and tool.cut_width(0.05) <= 0.15 + 1e-9,
+            f"recommended tool cuts {tool.cut_width(0.05):.3f} mm, inside the clearance",
+        )
+
+    config = SlicerConfig()
+    chosen = database.by_key(fallback["keys"]["isolation"])
+    apply_role(config, "isolation", chosen)
+    check(
+        config.isolation_tool.source == chosen.key
+        and config.isolation_tool.feed_rate == chosen.feed_rate,
+        "applying a database tool copies its geometry and feeds",
+    )
+    check(
+        config.isolation_tool.resolved_feeds(WEGSTR_LIGHT)[0] > 0,
+        "resolved feed rate is usable",
+    )
+
+
+def test_clearance_and_feeds(archive: Path) -> None:
+    print("\n== Copper clearance and per-tool feeds ==")
+    project = load_project(archive)
+    try:
+        copper = project.layer(LayerType.TOP_COPPER)
+        gap = estimate_min_clearance(copper.geometry)
+        check(gap is not None and 0.05 < gap < 2.0, f"measured copper clearance {gap:.3f} mm")
+
+        config = SlicerConfig()
+        config.mill_bottom = False
+        config.isolation_tool = ToolSpec(
+            "test", "flat", 0.3, feed_rate=123.0, plunge_rate=45.0, spindle_rpm=13000
+        )
+        plan = plan_toolpaths(project, config)
+        program = emit_plan(plan, config, program_name="feeds")
+        check("F123" in program, "tool feed rate appears in the G-code")
+        check("S13000" in program, "tool spindle speed appears in the G-code")
+        check("F45" in program, "tool plunge rate appears in the G-code")
+        check(
+            config.isolation_tool.resolved_feeds(WEGSTR_LIGHT)[2] == 13000,
+            "per-tool spindle speed overrides the profile default",
+        )
+    finally:
+        project.cleanup()
+
+
+def test_updater_versions() -> None:
+    print("\n== Update checker ==")
+    check(parse_version("v1.2.3") == (1, 2, 3), "parses a v-prefixed version")
+    check(parse_version("1.10.0") > parse_version("1.9.9"), "compares numerically, not lexically")
+    check(parse_version("2.0.0-beta1") == (2, 0, 0, 1), "parses a prerelease tag")
+
+
+def test_sqlite_reader() -> None:
+    print("\n== Pure-Python SQLite reader ==")
+    from sqlite_read import SqliteError, SqliteReader
+
+    found = find_tool_db()
+    if found is None:
+        print("  [skip] no .vtdb tool database on this machine")
+        return
+
+    reader = SqliteReader(found)
+    try:
+        tables = reader.tables()
+        check("tool_geometry" in tables, f"schema lists {len(tables)} tables")
+        check(reader.has_table("tool_cutting_data"), "finds the cutting-data table")
+        check(not reader.has_table("no_such_table"), "reports missing tables correctly")
+
+        columns = reader.columns("tool_geometry")
+        for expected in ("id", "name_format", "tool_type", "diameter", "included_angle"):
+            check(expected in columns, f"column {expected!r} parsed from the CREATE statement")
+
+        geometry = reader.rows("tool_geometry")
+        check(len(geometry) == 21, f"read {len(geometry)} tool_geometry rows")
+        check(
+            all("id" in row and "diameter" in row for row in geometry),
+            "rows are keyed by column name",
+        )
+        types = {row.get("tool_type") for row in geometry}
+        check(types <= {1, 2, 3, 4}, f"tool_type values decoded as integers: {sorted(types)}")
+        names = [row.get("name_format") for row in geometry]
+        check(
+            any(isinstance(n, str) and n for n in names),
+            "text values decoded as strings",
+        )
+
+        cutting = reader.rows("tool_cutting_data")
+        check(len(cutting) == 42, f"read {len(cutting)} tool_cutting_data rows")
+        speeds = [
+            row.get("spindle_speed")
+            for row in cutting
+            if row.get("spindle_speed") is not None
+        ]
+        check(
+            all(isinstance(s, int) for s in speeds),
+            "integer columns stay integers (no float coercion)",
+        )
+    finally:
+        reader.close()
+
+    try:
+        SqliteReader(HERE / "test_pipeline.py")
+        check(False, "non-SQLite input raises SqliteError")
+    except SqliteError:
+        check(True, "non-SQLite input raises SqliteError")
+
 
 def main() -> int:
     archive = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_ARCHIVE
@@ -669,6 +944,15 @@ def main() -> int:
     test_silkscreen_and_alignment(archive)
     test_gcode_reader(archive)
     test_ipc(archive)
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="wegstr_test_") as tmp:
+        test_dxf(Path(tmp))
+    test_sqlite_reader()
+    test_tool_db()
+    test_clearance_and_feeds(archive)
+    test_updater_versions()
 
     print()
     if FAILURES:

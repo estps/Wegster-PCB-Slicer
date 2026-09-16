@@ -1451,10 +1451,24 @@ def detect_layers(root: Path) -> list[tuple[Path, LayerType, float, str]]:
     return results
 
 
-def load_project(source: str | Path) -> PcbProject:
+def load_project(
+    source: str | Path,
+    dxf_width: float = 0.2,
+    dxf_roles: dict[str, str] | None = None,
+) -> PcbProject:
     source = Path(source).expanduser()
     if not source.exists():
         raise FileNotFoundError(f"Gerber source not found: {source}")
+
+    if source.is_file() and source.suffix.lower() == ".dxf":
+        import dxf_io
+
+        project = PcbProject(source=source)
+        dxf_io.load_dxf_into(project, source, default_width=dxf_width, roles=dxf_roles)
+        if not project.layers and not project.drills:
+            project.cleanup()
+            raise GerberError(f"No usable geometry found in {source.name}")
+        return project
 
     work_dir: Path | None = None
     if source.is_dir():
@@ -1470,7 +1484,8 @@ def load_project(source: str | Path) -> PcbProject:
         root = work_dir
     else:
         raise GerberError(
-            f"Unsupported source {source!r}: expected a .zip archive or a directory"
+            f"Unsupported source {source!r}: expected a .zip archive, a .dxf "
+            f"file, or a directory"
         )
 
     project = PcbProject(source=source, work_dir=work_dir)
@@ -1481,6 +1496,17 @@ def load_project(source: str | Path) -> PcbProject:
         raise GerberError(f"No Gerber or Excellon files found in {source}")
 
     for path, layer_type, confidence, reason in classified:
+        if path.suffix.lower() == ".dxf":
+            import dxf_io
+
+            try:
+                dxf_io.load_dxf_into(
+                    project, path, default_width=dxf_width, roles=dxf_roles
+                )
+            except Exception as exc:
+                project.warnings.append(f"{path.name}: failed to parse DXF ({exc})")
+            continue
+
         if layer_type.is_drill:
             parser = ExcellonParser.parse_file(
                 path, plated=layer_type is LayerType.DRILL_PTH

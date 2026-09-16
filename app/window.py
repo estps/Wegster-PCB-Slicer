@@ -26,6 +26,16 @@ from exporter import ExportPackage, verify_plan, write_package
 from gcode_reader import read_file as read_gcode_file
 from gerber_io import LayerType, PcbProject, load_project
 from pcb_engine import SlicerConfig, SlicerError, ToolSpec, plan_toolpaths
+from tool_db import (
+    DbTool,
+    ToolDatabase,
+    ToolDbError,
+    apply_role,
+    estimate_min_clearance,
+    load_tool_db,
+    recommend_tools,
+)
+from updater import UpdateInfo, check_for_update
 from wegstr_gcode import GCodeError, MachineProfile, estimate_runtime
 
 from . import theme
@@ -104,9 +114,18 @@ class MainWindow(QMainWindow):
         self._stat_pairs: list[tuple[QFrame, QLabel, QLabel]] = []
         self.viewer_toggles: dict[str, ToggleRow] = {}
 
+        self.tool_db: ToolDatabase | None = None
+        self.tool_combos: dict[str, QComboBox] = {}
+        self._tools_auto_applied = False
+        self.dxf_width = 0.2
+        self.dxf_roles: dict[str, str] = {}
+        self._update_info: UpdateInfo | None = None
+
         self.preferences = Preferences()
         self.preferences.restore_job(self.config, self.profile)
         self._panel_hidden = self.preferences.restore_panel_hidden()
+        self.dxf_width = self.preferences.restore_dxf_width()
+        self._load_tool_db()
 
         self._autosave = QTimer(self)
         self._autosave.setSingleShot(True)
@@ -131,6 +150,7 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._install_shortcuts()
+        self._populate_tool_combos()
 
         if self.preferences.restore_window(self):
             QTimer.singleShot(0, self._clamp_to_current_screen)
@@ -142,6 +162,8 @@ class MainWindow(QMainWindow):
         startup = self._startup_archive()
         if startup is not None:
             QTimer.singleShot(60, lambda: self._load(startup))
+
+        QTimer.singleShot(1400, self._check_for_updates)
 
     def _startup_archive(self) -> Path | None:
         remembered = self.preferences.restore_archive()
@@ -280,6 +302,9 @@ class MainWindow(QMainWindow):
         self.warning_strip = self._build_warning_strip()
         viewer_layout.addWidget(self.warning_strip)
 
+        self.update_strip = self._build_update_strip()
+        viewer_layout.addWidget(self.update_strip)
+
         body_layout.addWidget(viewer_frame, 1)
         body_layout.addWidget(self._build_side_panel())
 
@@ -387,6 +412,30 @@ class MainWindow(QMainWindow):
         layout.addStretch(1)
         strip.setVisible(False)
         return strip
+
+    def _build_update_strip(self) -> QWidget:
+        strip = QFrame()
+        strip.setObjectName("WarningStrip")
+        layout = QHBoxLayout(strip)
+        layout.setContentsMargins(10, 6, 10, 6)
+        self.update_label = QLabel("")
+        layout.addWidget(self.update_label)
+        layout.addStretch(1)
+        self.update_button = QPushButton("Download")
+        self.update_button.setFixedWidth(100)
+        self.update_button.clicked.connect(self._open_update_page)
+        layout.addWidget(self.update_button)
+        dismiss = QPushButton("Dismiss")
+        dismiss.setFixedWidth(84)
+        dismiss.clicked.connect(lambda: strip.setVisible(False))
+        layout.addWidget(dismiss)
+        strip.setVisible(False)
+        return strip
+
+    def _open_update_page(self) -> None:
+        info = self._update_info
+        if info is not None and info.url:
+            QDesktopServices.openUrl(QUrl(info.url))
 
     def _build_side_panel(self) -> QWidget:
         scroll = QScrollArea()
@@ -643,11 +692,36 @@ class MainWindow(QMainWindow):
         card = Card("Tooling", theme.PEACH)
         layout.addWidget(card)
 
+        self.tool_db_label = card.add_label("", "Hint")
+        self.tool_db_label.setWordWrap(True)
+
+        for role, label in (
+            ("isolation", "Isolation tool"),
+            ("rubout", "Rub-out tool"),
+            ("cutout", "Cut-out tool"),
+            ("silkscreen", "Silkscreen tool"),
+        ):
+            combo = QComboBox()
+            combo.currentIndexChanged.connect(
+                lambda _index, name=role: self._on_tool_combo_changed(name)
+            )
+            card.add_row(label, combo)
+            self.tool_combos[role] = combo
+
+        self.auto_tool_button = QPushButton("Auto-select from tool database")
+        self.auto_tool_button.setToolTip(
+            "Measure the copper clearance on the board and pick the largest\n"
+            "tool that fits, plus a cut-out and silkscreen bit."
+        )
+        self.auto_tool_button.clicked.connect(lambda: self._auto_select_tools(force=True))
+        card.add(self.auto_tool_button)
+
+        card.add_section_label("Isolation geometry")
         self.tool_kind_combo = QComboBox()
         self.tool_kind_combo.addItem("V-bit", "vbit")
         self.tool_kind_combo.addItem("Flat end mill", "flat")
         self.tool_kind_combo.currentIndexChanged.connect(self._on_tool_kind_changed)
-        card.add_row("Isolation tool", self.tool_kind_combo)
+        card.add_row("Type", self.tool_kind_combo)
 
         self.angle_row = self._bind_slider(
             card, "Included angle", 10.0, 90.0,
@@ -669,18 +743,139 @@ class MainWindow(QMainWindow):
         )
         self.cut_width_stat = card.add_stat("Effective cut width", "—", theme.TEAL)
 
+        card.add_section_label("Manual overrides")
         self._bind_slider(
-            card, "Cut-out tool", 0.2, 3.0,
+            card, "Cut-out diameter", 0.2, 3.0,
             lambda: self.config.cutout_tool.diameter,
             lambda v: setattr(self.config.cutout_tool, "diameter", v),
             2, " mm",
         )
         self._bind_slider(
-            card, "Rub-out tool", 0.2, 3.0,
+            card, "Rub-out diameter", 0.2, 3.0,
             lambda: self.config.rubout_tool.diameter,
             lambda v: setattr(self.config.rubout_tool, "diameter", v),
             2, " mm",
         )
+        self._bind_slider(
+            card, "Silkscreen diameter", 0.1, 1.0,
+            lambda: self.config.silkscreen_tool.diameter,
+            lambda v: setattr(self.config.silkscreen_tool, "diameter", v),
+            2, " mm",
+        )
+
+        card.add_section_label("DXF import")
+        self._bind_slider(
+            card, "Open path width", 0.05, 1.0,
+            lambda: self.dxf_width,
+            self._set_dxf_width,
+            2, " mm",
+        )
+
+    def _load_tool_db(self) -> None:
+        try:
+            self.tool_db = load_tool_db()
+        except ToolDbError as exc:
+            self.tool_db = None
+            self._tool_db_error = str(exc)
+        else:
+            self._tool_db_error = None
+
+    def _update_tool_db_label(self) -> None:
+        if not hasattr(self, "tool_db_label"):
+            return
+        if self.tool_db is not None:
+            self.tool_db_label.setText(
+                f"{len(self.tool_db)} tools from {self.tool_db.path.name} "
+                f"({self.tool_db.machine or 'unknown machine'})"
+            )
+            self.tool_db_label.setStyleSheet(f"color: {theme.OVERLAY};")
+        else:
+            self.tool_db_label.setText(
+                "No Vectric tool database found; using built-in defaults. "
+                "Set WEGSTR_TOOL_DB to point at a .vtdb file."
+            )
+            self.tool_db_label.setStyleSheet(f"color: {theme.YELLOW};")
+
+    def _populate_tool_combos(self) -> None:
+        for role, combo in self.tool_combos.items():
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem("Custom / manual", None)
+            if self.tool_db is not None:
+                for group, tools in self.tool_db.groups().items():
+                    for tool in tools:
+                        combo.addItem(f"{tool.name}   ·   {group}", tool.key)
+            combo.blockSignals(False)
+        self._update_tool_db_label()
+
+    def _sync_tool_combos(self) -> None:
+        for role, combo in self.tool_combos.items():
+            tool = getattr(self.config, f"{role}_tool", None)
+            source = getattr(tool, "source", "") if tool is not None else ""
+            index = combo.findData(source) if source else 0
+            if index < 0:
+                index = 0
+            if index != combo.currentIndex():
+                combo.blockSignals(True)
+                combo.setCurrentIndex(index)
+                combo.blockSignals(False)
+
+    def _on_tool_combo_changed(self, role: str) -> None:
+        combo = self.tool_combos.get(role)
+        if combo is None or self.tool_db is None:
+            return
+        key = combo.currentData()
+        if not key:
+            return
+        tool = self.tool_db.by_key(str(key))
+        if tool is None:
+            return
+        apply_role(self.config, role, tool)
+        self._refresh_widgets()
+        self._debounce.start()
+        self._schedule_autosave()
+
+    def _set_dxf_width(self, value: float) -> None:
+        self.dxf_width = float(value)
+        self.preferences.save_dxf_width(self.dxf_width)
+
+    def _auto_select_tools(self, force: bool = False) -> None:
+        if self.tool_db is None:
+            self.status_label.setText(
+                "No tool database found. Set WEGSTR_TOOL_DB to a .vtdb file."
+            )
+            return
+        if self._tools_auto_applied and not force:
+            return
+
+        gap = None
+        if self.project is not None:
+            for layer in self.project.layers:
+                if layer.layer_type.is_copper and layer.geometry is not None:
+                    gap = estimate_min_clearance(layer.geometry)
+                    break
+
+        try:
+            recommendation = recommend_tools(
+                self.tool_db,
+                isolation_depth=self.config.isolation_depth,
+                min_gap=gap,
+            )
+        except ToolDbError as exc:
+            self.status_label.setText(str(exc))
+            return
+
+        for role, key in recommendation["keys"].items():
+            apply_role(self.config, role, self.tool_db.by_key(key))
+        self._tools_auto_applied = True
+        self._refresh_widgets()
+        self._schedule_autosave()
+
+        note = recommendation["reasons"].get("isolation", "")
+        prefix = f"copper clearance {gap:.3f} mm. " if gap is not None else ""
+        self._tool_note = f"{prefix}{note}"
+        self.status_label.setText(self._tool_note)
+        self._debounce.start()
 
     def _build_isolation_card(self, layout: QVBoxLayout) -> None:
         card = Card("Isolation Milling", theme.ISOLATION)
@@ -1128,6 +1323,7 @@ class MainWindow(QMainWindow):
                 combo.blockSignals(False)
         self._update_enabled_states()
         self._update_derived()
+        self._sync_tool_combos()
 
     def _update_enabled_states(self) -> None:
         is_vbit = self.config.isolation_tool.kind == "vbit"
@@ -1158,11 +1354,35 @@ class MainWindow(QMainWindow):
     def _on_cursor_moved(self, _x: float, _y: float) -> None:
         pass
 
+    def _check_for_updates(self) -> None:
+        thread = threading.Thread(target=self._run_update_check, daemon=True)
+        thread.start()
+
+    def _run_update_check(self) -> None:
+        info = check_for_update()
+        if info is None:
+            return
+        self._update_info = info
+        QTimer.singleShot(0, self._show_update_banner)
+
+    def _show_update_banner(self) -> None:
+        info = self._update_info
+        if info is None:
+            return
+        self.update_label.setText(
+            f"Update available: version {info.version} (you have {info.current})."
+        )
+        self.update_strip.setVisible(True)
+
 
     def _choose_archive(self) -> None:
         start = str(self.archive.parent) if self.archive else str(Path.home())
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open Gerber archive", start, "Gerber archive (*.zip);;All files (*)"
+            self,
+            "Open PCB artwork",
+            start,
+            "PCB artwork (*.zip *.dxf);;Gerber archive (*.zip);;"
+            "DXF drawing (*.dxf);;All files (*)",
         )
         if path:
             self._load(Path(path))
@@ -1176,7 +1396,11 @@ class MainWindow(QMainWindow):
         try:
             if self.project is not None:
                 self.project.cleanup()
-            self.project = load_project(path)
+            self.project = load_project(
+                path,
+                dxf_width=self.dxf_width,
+                dxf_roles=self.dxf_roles or None,
+            )
         except Exception as exc:
             self.project = None
             self.status_label.setText(f"Error: {exc}")
@@ -1189,12 +1413,17 @@ class MainWindow(QMainWindow):
         if has_back and self._sides_defaulted_for != str(path):
             self.config.mill_bottom = True
         self._sides_defaulted_for = str(path)
+        self._tools_auto_applied = False
+        self._auto_select_tools()
         self._refresh_widgets()
         self.preferences.save_archive(str(path))
         self._schedule_autosave()
 
         self._populate_report(self.project)
-        self.status_label.setText(f"Loaded {path.name} — computing…")
+        note = getattr(self, "_tool_note", "")
+        self.status_label.setText(
+            f"Loaded {path.name} — {note}" if note else f"Loaded {path.name} — computing…"
+        )
         self._request_plan()
 
     def _update_side_hint(self) -> None:

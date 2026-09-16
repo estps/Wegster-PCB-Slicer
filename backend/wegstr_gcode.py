@@ -223,27 +223,32 @@ def _emit_polyline_at_depth(
     polyline: Polyline,
     depth: float,
     profile: MachineProfile,
+    cut_feed: float | None = None,
+    plunge_feed: float | None = None,
 ) -> float:
     points = polyline.points
     if len(points) < 2:
         return 0.0
 
+    cut_feed = profile.cut_feed if cut_feed is None else cut_feed
+    plunge_feed = profile.plunge_feed if plunge_feed is None else plunge_feed
+
     _safe_retract(builder)
     builder.rapid(x=float(points[0, 0]), y=float(points[0, 1]))
-    builder.feed_move(z=-abs(depth), feed=profile.plunge_feed)
+    builder.feed_move(z=-abs(depth), feed=plunge_feed)
 
     for index in range(1, len(points)):
         builder.feed_move(
             x=float(points[index, 0]),
             y=float(points[index, 1]),
-            feed=profile.cut_feed,
+            feed=cut_feed,
         )
 
     if polyline.closed:
         builder.feed_move(
             x=float(points[0, 0]),
             y=float(points[0, 1]),
-            feed=profile.cut_feed,
+            feed=cut_feed,
         )
 
     _safe_retract(builder)
@@ -256,10 +261,12 @@ def _emit_drill(
     total_depth: float,
     peck_depth: float,
     profile: MachineProfile,
+    drill_feed: float | None = None,
 ) -> None:
     builder.rapid(x=hole.x, y=hole.y)
     builder.rapid(z=profile.rapid_z)
 
+    drill_feed = profile.drill_feed if drill_feed is None else drill_feed
     total = abs(total_depth)
     step = max(peck_depth, 0.05)
     previous = 0.0
@@ -269,7 +276,7 @@ def _emit_drill(
         target = -travelled
         if target >= previous - 1e-9:
             continue
-        builder.feed_move(z=target, feed=profile.drill_feed)
+        builder.feed_move(z=target, feed=drill_feed)
         builder.rapid(z=profile.rapid_z)
         previous = target
 
@@ -286,6 +293,12 @@ def _group_header(
         f"Tool: {group.tool.name}  |  depth {group.depth.total_depth:.3f} mm "
         f"in {group.depth.stepdown:.3f} mm steps"
     )
+    cut_feed, plunge_feed, rpm = group.tool.resolved_feeds(profile)
+    if group.tool.feed_rate or group.tool.plunge_rate or group.tool.spindle_rpm:
+        builder.comment(
+            f"Tool data: {cut_feed:.0f} mm/min feed, {plunge_feed:.0f} mm/min "
+            f"plunge, {rpm} rpm"
+        )
     if group.cut_length:
         builder.comment(f"Cutting distance: {group.cut_length:.1f} mm")
     if group.holes:
@@ -320,12 +333,13 @@ def _group_header(
 def _estimate_seconds(plan: ToolpathPlan, profile: MachineProfile, config: SlicerConfig) -> float:
     seconds = 0.0
     for group in plan.groups:
+        cut_feed, plunge_feed, _rpm = group.tool.resolved_feeds(profile)
         passes = len(group.depth.passes())
         cut_length = group.cut_length * passes
-        seconds += cut_length / max(profile.cut_feed, 1.0) * 60.0
+        seconds += cut_length / max(cut_feed, 1.0) * 60.0
         plunge_distance = abs(group.depth.total_depth)
         plunge_count = len(group.polylines) * passes
-        seconds += plunge_count * (plunge_distance / max(profile.plunge_feed, 1.0) * 60.0)
+        seconds += plunge_count * (plunge_distance / max(plunge_feed, 1.0) * 60.0)
         seconds += plunge_count * 2.0
         for _hole in group.holes:
             depth = abs(group.depth.total_depth)
@@ -407,7 +421,8 @@ def emit_program(
         builder.comment("=" * 46)
         _group_header(builder, group, profile, tool_index)
 
-        builder.spindle_on(profile.spindle_rpm)
+        cut_feed, plunge_feed, rpm = group.tool.resolved_feeds(profile)
+        builder.spindle_on(rpm)
         if profile.spindle_spinup_dwell > 0:
             builder.dwell(profile.spindle_spinup_dwell)
 
@@ -419,7 +434,7 @@ def emit_program(
                     else group.depth.total_depth
                 )
                 _emit_drill(
-                    builder, hole, total, config.peck_depth, profile
+                    builder, hole, total, config.peck_depth, profile, plunge_feed
                 )
         else:
             passes = group.depth.passes()
@@ -427,7 +442,9 @@ def emit_program(
                 builder.comment(f"Depth {abs(depth):.3f} mm")
                 builder.reset_modal()
                 for polyline in group.polylines:
-                    total_cut += _emit_polyline_at_depth(builder, polyline, depth, profile)
+                    total_cut += _emit_polyline_at_depth(
+                        builder, polyline, depth, profile, cut_feed, plunge_feed
+                    )
 
         builder.spindle_off()
         builder.dwell(0.2)

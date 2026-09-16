@@ -12,6 +12,10 @@ hidden = [
     "exporter",
     "gcode_verify",
     "gcode_reader",
+    "dxf_io",
+    "tool_db",
+    "sqlite_read",
+    "updater",
 ]
 
 excludes = [
@@ -41,6 +45,7 @@ excludes = [
     "tkinter",
     "unittest",
     "pydoc_data",
+    "sqlite3",
 ]
 
 a = Analysis(

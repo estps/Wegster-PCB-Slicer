@@ -1354,14 +1354,19 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._show_update_banner)
 
     def _register_in_start_menu(self) -> None:
-        if self.preferences.shortcut_attempted():
+        from .shortcuts import is_current, target_key
+
+        key = target_key()
+        if not key:
+            return
+        if is_current(recorded=self.preferences.shortcut_target()):
             return
         try:
             installed = install_shortcut()
         except Exception:
             installed = None
-        self.preferences.mark_shortcut_attempted()
         if installed is not None:
+            self.preferences.set_shortcut_target(key)
             self.status_label.setText(
                 "Added to the Start menu - search for 'Wegstr' to launch it."
             )

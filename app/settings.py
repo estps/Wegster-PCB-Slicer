@@ -23,7 +23,7 @@ _KEY_PROFILE = "job/profile"
 _KEY_VIEWER = "viewer"
 _KEY_PANEL_HIDDEN = "view/panel_hidden"
 _KEY_ARCHIVE = "job/last_archive"
-_KEY_SHORTCUT = "install/start_menu_shortcut"
+_KEY_SHORTCUT = "install/start_menu_target"
 
 
 def _settings() -> QSettings:
@@ -147,15 +147,15 @@ class Preferences:
         except Exception:
             return None
 
-    def shortcut_attempted(self) -> bool:
+    def shortcut_target(self) -> str:
         try:
-            return self.settings.value(_KEY_SHORTCUT, False, type=bool)
+            return str(self.settings.value(_KEY_SHORTCUT, "") or "")
         except Exception:
-            return False
+            return ""
 
-    def mark_shortcut_attempted(self) -> None:
+    def set_shortcut_target(self, value: str) -> None:
         try:
-            self.settings.setValue(_KEY_SHORTCUT, True)
+            self.settings.setValue(_KEY_SHORTCUT, str(value))
             self.settings.sync()
         except Exception:
             pass

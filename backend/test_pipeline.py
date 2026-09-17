@@ -842,9 +842,11 @@ def test_start_menu_shortcut() -> None:
             SHORTCUT_NAME,
             current_target,
             install_shortcut,
+            is_current,
             remove_shortcut,
             shortcut_path,
             start_menu_dir,
+            target_key,
         )
     except Exception as exc:
         check(False, f"shortcut module imports ({exc})")
@@ -880,10 +882,26 @@ def test_start_menu_shortcut() -> None:
             created is not None and created.suffix.lower() == ".lnk",
             "the shortcut has a .lnk extension",
         )
+
+        key = target_key(target)
+        check(bool(key) and "|" in key, f"target key records the exe and arguments: {key}")
+        check(
+            is_current(directory=directory, target=target, recorded=key),
+            "a freshly created shortcut is reported as current",
+        )
+        check(
+            not is_current(directory=directory, target=target, recorded="C:/gone|"),
+            "a shortcut pointing at an old location is reported as stale",
+        )
+
         check(remove_shortcut(directory), "removed the temp shortcut")
         check(
             created is not None and not created.exists(),
             "the shortcut is gone after removal",
+        )
+        check(
+            not is_current(directory=directory, target=target, recorded=key),
+            "a missing shortcut is reported as stale, so it gets rebuilt",
         )
 
 

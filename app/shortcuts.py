@@ -10,9 +10,11 @@ __all__ = [
     "SHORTCUT_NAME",
     "current_target",
     "install_shortcut",
+    "is_current",
     "remove_shortcut",
     "shortcut_path",
     "start_menu_dir",
+    "target_key",
 ]
 
 SHORTCUT_NAME = "Wegstr PCB Slicer.lnk"
@@ -73,6 +75,28 @@ def shortcut_path(directory: Path | None = None) -> Path | None:
     if target_dir is None:
         return None
     return target_dir / SHORTCUT_NAME
+
+
+def target_key(
+    target: tuple[Path, str, Path, Path | None] | None = None,
+) -> str:
+    resolved = target or current_target()
+    if resolved is None:
+        return ""
+    executable, arguments, _working_dir, _icon = resolved
+    return f"{executable}|{arguments}"
+
+
+def is_current(
+    directory: Path | None = None,
+    target: tuple[Path, str, Path, Path | None] | None = None,
+    recorded: str = "",
+) -> bool:
+    path = shortcut_path(directory)
+    if path is None or not path.exists():
+        return False
+    key = target_key(target)
+    return bool(key) and key == recorded
 
 
 def _powershell(script: str) -> tuple[int, str]:

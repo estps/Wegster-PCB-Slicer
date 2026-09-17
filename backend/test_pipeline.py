@@ -828,6 +828,65 @@ def test_sqlite_reader() -> None:
         check(True, "non-SQLite input raises SqliteError")
 
 
+def test_start_menu_shortcut() -> None:
+    print("\n== Start-menu registration ==")
+    import sys
+    import tempfile
+
+    root = HERE.parent
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+
+    try:
+        from app.shortcuts import (
+            SHORTCUT_NAME,
+            current_target,
+            install_shortcut,
+            remove_shortcut,
+            shortcut_path,
+            start_menu_dir,
+        )
+    except Exception as exc:
+        check(False, f"shortcut module imports ({exc})")
+        return
+
+    if sys.platform != "win32":
+        print("  [skip] Start-menu shortcuts are Windows-only")
+        return
+
+    menu = start_menu_dir()
+    check(menu is not None and menu.is_dir(), f"found the Start-menu folder: {menu}")
+    check(
+        shortcut_path() is not None and shortcut_path().name == SHORTCUT_NAME,
+        "shortcut path resolves to a .lnk in the Start menu",
+    )
+
+    target = current_target()
+    check(target is not None, "resolved something to point the shortcut at")
+    if target is not None:
+        executable, arguments, working_dir, _icon = target
+        check(executable.exists(), f"shortcut target exists: {executable.name}")
+        check(working_dir.is_dir(), "shortcut working directory exists")
+        check(
+            isinstance(arguments, str),
+            f"shortcut arguments resolved ({arguments or 'none'})",
+        )
+
+    with tempfile.TemporaryDirectory(prefix="wegstr_lnk_") as tmp:
+        directory = Path(tmp)
+        created = install_shortcut(directory=directory, target=target)
+        check(created is not None and created.exists(), "created a shortcut in a temp folder")
+        check(
+            created is not None and created.suffix.lower() == ".lnk",
+            "the shortcut has a .lnk extension",
+        )
+        check(remove_shortcut(directory), "removed the temp shortcut")
+        check(
+            created is not None and not created.exists(),
+            "the shortcut is gone after removal",
+        )
+
+
 def main() -> int:
     archive = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_ARCHIVE
     if not archive.exists():
@@ -845,6 +904,7 @@ def main() -> int:
     test_ipc(archive)
     test_sqlite_reader()
     test_tool_db()
+    test_start_menu_shortcut()
     test_clearance_and_feeds(archive)
     test_updater_versions()
 

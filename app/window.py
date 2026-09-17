@@ -40,6 +40,7 @@ from wegstr_gcode import GCodeError, MachineProfile, estimate_runtime
 
 from . import theme
 from .settings import Preferences
+from .shortcuts import install_shortcut
 from .viewer import ToolpathView
 from .widgets import Card, SliderRow, StatRow, ToggleRow
 
@@ -161,6 +162,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(60, lambda: self._load(startup))
 
         QTimer.singleShot(1400, self._check_for_updates)
+        QTimer.singleShot(300, self._register_in_start_menu)
 
     def _startup_archive(self) -> Path | None:
         remembered = self.preferences.restore_archive()
@@ -1350,6 +1352,19 @@ class MainWindow(QMainWindow):
             return
         self._update_info = info
         QTimer.singleShot(0, self._show_update_banner)
+
+    def _register_in_start_menu(self) -> None:
+        if self.preferences.shortcut_attempted():
+            return
+        try:
+            installed = install_shortcut()
+        except Exception:
+            installed = None
+        self.preferences.mark_shortcut_attempted()
+        if installed is not None:
+            self.status_label.setText(
+                "Added to the Start menu - search for 'Wegstr' to launch it."
+            )
 
     def _show_update_banner(self) -> None:
         info = self._update_info

@@ -126,33 +126,18 @@ def install() -> int:
         write_icon(ICON)
     print(f"  icon: {ICON} ({ICON.stat().st_size / 1024:.1f} KB)")
 
-    pythonw = ROOT / ".venv" / "Scripts" / "pythonw.exe"
-    if not pythonw.exists():
-        pythonw = Path(sys.executable).with_name("pythonw.exe")
-    if not pythonw.exists():
-        print("error: could not find pythonw.exe", file=sys.stderr)
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from app.shortcuts import current_target, install_shortcut
+
+    target = current_target()
+    if target is None:
+        print("error: could not work out what to point the shortcut at", file=sys.stderr)
         return 2
 
-    programs = start_menu_dir()
-    shortcut = programs / SHORTCUT_NAME
-
-    script = f"""
-$shell = New-Object -ComObject WScript.Shell
-$link = $shell.CreateShortcut("{shortcut}")
-$link.TargetPath = "{pythonw}"
-$link.Arguments = "run.py"
-$link.WorkingDirectory = "{ROOT}"
-$link.IconLocation = "{ICON},0"
-$link.Description = "PCB slicer and G-code generator for the Wegstr Light CNC"
-$link.Save()
-"""
-    result = subprocess.run(
-        ["powershell", "-NoProfile", "-Command", script],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0 or not shortcut.exists():
-        print(f"error: {result.stderr.strip() or 'shortcut not created'}", file=sys.stderr)
+    shortcut = install_shortcut(target=target)
+    if shortcut is None:
+        print("error: shortcut was not created", file=sys.stderr)
         return 1
 
     print(f"  shortcut: {shortcut}")
@@ -162,10 +147,13 @@ $link.Save()
 
 
 def remove() -> int:
-    shortcut = start_menu_dir() / SHORTCUT_NAME
-    if shortcut.exists():
-        shortcut.unlink()
-        print(f"Removed {shortcut}")
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from app.shortcuts import remove_shortcut, shortcut_path
+
+    path = shortcut_path()
+    if remove_shortcut():
+        print(f"Removed {path}")
     else:
         print("Nothing to remove.")
     return 0

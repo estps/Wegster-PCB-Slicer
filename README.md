@@ -37,6 +37,9 @@ the board.
   plunges and tool changes with playback.
 - **Update check** — on launch it asks GitHub whether a newer release exists and
   offers a download link. It never installs anything by itself.
+- **Finds itself in Windows** — on first launch it adds a Start-menu shortcut
+  (per-user, no admin needed) so you can type "Wegstr" into the search bar and
+  hit it. Done once; remove it with `python tools\install_start_menu.py --remove`.
 
 ## Requirements
 
@@ -120,6 +123,7 @@ backend/          pure Python, no UI dependency
 app/              PySide6 desktop UI
   window.py         main window, threading, presets
   viewer.py         pixmap-cached toolpath canvas
+  shortcuts.py      first-run Start-menu registration
   theme.py          dark design system
   settings.py       persistent preferences
 ```

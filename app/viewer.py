@@ -101,6 +101,7 @@ class ToolpathView(QGraphicsView):
         self._pan_origin = QPointF()
         self._cursor = QPointF()
         self._has_cursor = False
+        self._needs_fit = True
 
         self._min_scale = 0.05
         self._max_scale = 400.0
@@ -112,6 +113,7 @@ class ToolpathView(QGraphicsView):
         self._layers.clear()
         self._holes.clear()
         self.clear_program()
+        self._needs_fit = True
         self._invalidate()
         self.viewport().update()
 
@@ -219,10 +221,15 @@ class ToolpathView(QGraphicsView):
         self.viewport().update()
 
     def set_machine(self, machine: tuple[float, float]) -> None:
+        changed = machine != self._machine
         self._machine = machine
         self._bed = QRectF(0.0, 0.0, machine[0], machine[1])
         self.setSceneRect(self._bed)
-        self.fit()
+        # Keep the user's zoom/pan when only the plan is recomputed.
+        if changed or self._needs_fit:
+            self.fit()
+        else:
+            self._schedule_rebuild()
 
     def set_plan(self, plan, machine: tuple[float, float]) -> None:
         self.set_machine(machine)
@@ -342,6 +349,7 @@ class ToolpathView(QGraphicsView):
         rect = self.sceneRect()
         if rect.isEmpty():
             return
+        self._needs_fit = False
         self.resetTransform()
         self.fitInView(rect.adjusted(-3.0, -3.0, 3.0, 3.0), Qt.AspectRatioMode.KeepAspectRatio)
         base = self.transform().m11()

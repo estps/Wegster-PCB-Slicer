@@ -96,6 +96,9 @@ class Planner(QObject):
 
 
 class MainWindow(QMainWindow):
+
+    update_available = Signal(object)
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Wegstr PCB Slicer")
@@ -133,6 +136,7 @@ class MainWindow(QMainWindow):
         self.planner = Planner()
         self.planner.finished.connect(self._on_plan_ready)
         self.planner.failed.connect(self._on_plan_failed)
+        self.update_available.connect(self._show_update_banner)
 
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
@@ -1350,8 +1354,8 @@ class MainWindow(QMainWindow):
         info = check_for_update()
         if info is None:
             return
-        self._update_info = info
-        QTimer.singleShot(0, self._show_update_banner)
+        # Runs on a plain Python thread; a queued signal is the only safe way back to the GUI.
+        self.update_available.emit(info)
 
     def _register_in_start_menu(self) -> None:
         from .shortcuts import is_current, target_key
@@ -1371,10 +1375,8 @@ class MainWindow(QMainWindow):
                 "Added to the Start menu - search for 'Wegstr' to launch it."
             )
 
-    def _show_update_banner(self) -> None:
-        info = self._update_info
-        if info is None:
-            return
+    def _show_update_banner(self, info: UpdateInfo) -> None:
+        self._update_info = info
         self.update_label.setText(
             f"Update available: version {info.version} (you have {info.current})."
         )

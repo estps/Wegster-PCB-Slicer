@@ -171,6 +171,14 @@ QDoubleSpinBox, QSpinBox {{
 }}
 QDoubleSpinBox:focus, QSpinBox:focus {{ border-color: {BLUE}; }}
 QDoubleSpinBox:disabled, QSpinBox:disabled {{ color: {OVERLAY}; }}
+/* Buttons are hidden here rather than via NoButtons: with a stylesheet applied,
+   Qt 6.12 on Windows collapses the edit field to 1px when NoButtons is set. */
+QDoubleSpinBox::up-button, QDoubleSpinBox::down-button,
+QSpinBox::up-button, QSpinBox::down-button {{
+    width: 0px;
+    height: 0px;
+    border: none;
+}}
 
 QComboBox {{
     background-color: {CRUST};

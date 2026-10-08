@@ -191,9 +191,6 @@ class SliderRow(QWidget):
             self._spin.setValue(value)
             self._spin.setSuffix(suffix)
 
-        from PySide6.QtWidgets import QAbstractSpinBox
-
-        self._spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
         self._spin.setAlignment(Qt.AlignmentFlag.AlignRight)
         self._spin.setMinimumWidth(72)
         self._spin.setMaximumWidth(94)

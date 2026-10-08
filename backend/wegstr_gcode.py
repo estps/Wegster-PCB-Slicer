@@ -314,6 +314,12 @@ def _group_header(
                 f"- into the spoilboard"
             )
 
+    needs_tool_change = not group.skip_tool_change and profile.use_tool_change_pause
+    if group.requires_flip_before or needs_tool_change:
+        # Pauses must happen at tool-change height, not at rapid_z above the stock.
+        builder.comment(f"Lift to tool-change height {profile.tool_change_z:.2f} mm")
+        builder.rapid(z=profile.tool_change_z)
+
     if group.requires_flip_before:
         builder.comment("")
         builder.comment("*** FLIP THE WORKPIECE OVER BEFORE CONTINUING ***")
@@ -325,7 +331,7 @@ def _group_header(
             "No tool change: use whatever bit is already in the spindle."
         )
         builder.comment("Whatever bit this is, that is your pin size.")
-    elif profile.use_tool_change_pause:
+    elif needs_tool_change:
         builder.comment(f"Insert tool: {group.tool.name}")
         builder.pause(f"Change to {group.tool.name}")
 
@@ -407,7 +413,6 @@ def emit_program(
     builder.set_units_and_mode()
     builder.comment(f"Lift to safe height {profile.tool_change_z:.2f} mm before moving")
     builder.rapid(z=profile.tool_change_z)
-    builder.rapid(z=profile.rapid_z)
 
     if preamble:
         builder.comment("")

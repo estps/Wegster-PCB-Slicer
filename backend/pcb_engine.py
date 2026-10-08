@@ -1232,8 +1232,13 @@ def plan_toolpaths(project: PcbProject, config: SlicerConfig) -> ToolpathPlan:
         ]
         grouped = generate_drilling(holes)
 
+    # Drilling uses top-side coordinates, so it goes before the first bottom group.
+    drill_index = next(
+        (i for i, g in enumerate(plan.groups) if g.side == "bottom"), len(plan.groups)
+    )
     for diameter, group_holes in grouped.items():
-        plan.groups.append(
+        plan.groups.insert(
+            drill_index,
             ToolpathGroup(
                 name=f"Drill {diameter:.3f} mm ({len(group_holes)} holes)",
                 kind="drill",
@@ -1246,8 +1251,9 @@ def plan_toolpaths(project: PcbProject, config: SlicerConfig) -> ToolpathPlan:
                 polylines=[],
                 holes=list(group_holes),
                 side="top",
-            )
+            ),
         )
+        drill_index += 1
 
     if config.drill_enabled and not grouped:
         plan.warnings.append("No valid drill hits found.")
@@ -1274,6 +1280,8 @@ def plan_toolpaths(project: PcbProject, config: SlicerConfig) -> ToolpathPlan:
     if config.cutout_enabled:
         paths = generate_edge_cut(board.outline, config.cutout_tool, config)
         if paths:
+            # The outline is top-side geometry: flip back after the bottom side.
+            flipped = any(g.requires_flip_before for g in plan.groups)
             plan.groups.append(
                 ToolpathGroup(
                     name="Board cut-out",
@@ -1282,6 +1290,7 @@ def plan_toolpaths(project: PcbProject, config: SlicerConfig) -> ToolpathPlan:
                     depth=DepthStrategy(config.cutout_depth, config.cutout_stepdown),
                     polylines=paths,
                     side="top",
+                    requires_flip_before=flipped,
                 )
             )
         else:

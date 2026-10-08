@@ -514,6 +514,13 @@ class BoardGeometry:
     source_size: tuple[float, float]
     silkscreen: dict[str, BaseGeometry] = field(default_factory=dict)
     pads: dict[str, BaseGeometry] = field(default_factory=dict)
+    # Outline mirrored with the same transform as the bottom copper (None when not mirrored).
+    outline_bottom: Polygon | None = None
+
+    def outline_for(self, side: str) -> Polygon:
+        if side == "bottom" and self.outline_bottom is not None:
+            return self.outline_bottom
+        return self.outline
 
     @property
     def width(self) -> float:
@@ -705,6 +712,8 @@ def build_board(project: PcbProject, config: SlicerConfig) -> BoardGeometry:
         for hole in project.all_holes
     ]
 
+    bottom_outline = flip(machine_outline, "bottom")
+
     return BoardGeometry(
         outline=machine_outline,
         copper=copper,
@@ -713,6 +722,7 @@ def build_board(project: PcbProject, config: SlicerConfig) -> BoardGeometry:
         source_size=(source_width, source_height),
         silkscreen=silkscreen,
         pads=pads,
+        outline_bottom=bottom_outline if bottom_outline is not machine_outline else None,
     )
 
 
@@ -1138,8 +1148,10 @@ def plan_toolpaths(project: PcbProject, config: SlicerConfig) -> ToolpathPlan:
             plan.warnings.append(f"No copper geometry for the {side} side; skipped.")
             continue
 
+        outline = board.outline_for(side)
+
         if config.isolation_enabled:
-            paths = generate_isolation(copper, board.outline, config.isolation_tool, config)
+            paths = generate_isolation(copper, outline, config.isolation_tool, config)
             if paths:
                 plan.groups.append(
                     ToolpathGroup(
@@ -1157,7 +1169,7 @@ def plan_toolpaths(project: PcbProject, config: SlicerConfig) -> ToolpathPlan:
                 plan.warnings.append(f"Isolation produced no toolpaths on the {side} side.")
 
         if config.rubout_enabled:
-            paths = generate_rubout(copper, board.outline, config.rubout_tool, config)
+            paths = generate_rubout(copper, outline, config.rubout_tool, config)
             if paths:
                 plan.groups.append(
                     ToolpathGroup(
@@ -1203,7 +1215,7 @@ def plan_toolpaths(project: PcbProject, config: SlicerConfig) -> ToolpathPlan:
                     )
                     continue
                 paths = generate_silkscreen(
-                    silk, board.pads.get(side), board.outline, config
+                    silk, board.pads.get(side), board.outline_for(side), config
                 )
                 label = f"Silkscreen engrave ({side})"
 

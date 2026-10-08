@@ -1008,12 +1008,11 @@ def generate_edge_cut(
     if radius <= 0:
         raise SlicerError("Cut-out tool has zero cutting radius.")
 
-    centerline = _buffer(board, -radius, config.quad_segs)
+    # Tool centre runs outside the board edge (and inside interior cut-outs) so
+    # the cutter only touches the outline instead of eating into the board.
+    centerline = _buffer(board, radius, config.quad_segs)
     if centerline is None:
-        raise SlicerError(
-            "Board is too small for the selected cut-out tool "
-            f"(needs at least {2 * radius:.2f} mm in every direction)."
-        )
+        raise SlicerError("Failed to offset the board outline for the cut-out tool.")
 
     polylines: list[Polyline] = []
     rings = list(iter_rings(centerline))
@@ -1025,8 +1024,11 @@ def generate_edge_cut(
     for index, ring in enumerate(rings):
         is_outer = index == 0
         if config.tab_enabled and config.tab_count > 0 and is_outer and config.tab_width > 0:
-            positions = _choose_tab_positions(ring, config.tab_count, config.tab_width)
-            pieces = _apply_tabs(ring, positions, config.tab_width)
+            # The cutter removes one radius on each side of the gap, so widen the
+            # gap in the centre path to leave tab_width of material standing.
+            gap = config.tab_width + 2 * radius
+            positions = _choose_tab_positions(ring, config.tab_count, gap)
+            pieces = _apply_tabs(ring, positions, gap)
             for piece in pieces:
                 if len(piece) >= 2:
                     polyline = Polyline(piece, closed=False, kind="cutout")
@@ -1108,19 +1110,28 @@ def plan_toolpaths(project: PcbProject, config: SlicerConfig) -> ToolpathPlan:
             )
 
     if config.enforce_envelope:
-        width = board.width
-        height = board.height
+        # The cut-out tool centre travels outside the outline by its radius.
+        cut_margin = (
+            config.cutout_tool.radius_at_depth(config.cutout_depth)
+            if config.cutout_enabled
+            else 0.0
+        )
+        width = board.width + 2 * cut_margin
+        height = board.height + 2 * cut_margin
         if width > config.machine_x or height > config.machine_y:
             raise SlicerError(
-                f"Board is {width:.1f} x {height:.1f} mm which does not fit the "
-                f"{config.machine_x:.0f} x {config.machine_y:.0f} mm work area."
+                f"Board including cut-out path is {width:.1f} x {height:.1f} mm which "
+                f"does not fit the {config.machine_x:.0f} x {config.machine_y:.0f} mm work area."
             )
-        max_x = board.outline.bounds[2]
-        max_y = board.outline.bounds[3]
-        if max_x > config.machine_x or max_y > config.machine_y:
+        min_x = board.outline.bounds[0] - cut_margin
+        min_y = board.outline.bounds[1] - cut_margin
+        max_x = board.outline.bounds[2] + cut_margin
+        max_y = board.outline.bounds[3] + cut_margin
+        if min_x < 0 or min_y < 0 or max_x > config.machine_x or max_y > config.machine_y:
             raise SlicerError(
-                f"Board at origin {config.origin_mode!r} reaches ({max_x:.1f}, "
-                f"{max_y:.1f}) mm which is outside the work area."
+                f"Board at origin {config.origin_mode!r} spans ({min_x:.1f}, {min_y:.1f}) to "
+                f"({max_x:.1f}, {max_y:.1f}) mm including the cut-out path, which is "
+                "outside the work area."
             )
 
     alignment = generate_alignment_holes(board, config)

@@ -623,9 +623,14 @@ def _step_description(export_file: ExportFile, config: SlicerConfig) -> str:
             "that size into the holes before starting the next file."
         )
     if kind == "drill":
+        retract = (
+            f"backing off {config.peck_retract:.1f} mm between pecks to clear chips"
+            if config.peck_retract > 0
+            else "retracting fully between pecks to clear chips"
+        )
         text = (
             f"Peck-drills every hole to {config.board_thickness + config.drill_depth_extra:.2f} mm "
-            f"in {config.peck_depth:.2f} mm pecks, retracting fully between pecks to clear chips. "
+            f"in {config.peck_depth:.2f} mm pecks, {retract}. "
             "The machine will pause for each drill bit — swap bits when prompted."
         )
         if has_alignment:

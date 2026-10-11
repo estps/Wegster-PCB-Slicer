@@ -1242,7 +1242,7 @@ class ExcellonParser:
         self._unit_scale = 1.0
         self._int_digits = 3
         self._dec_digits = 3
-        self._leading_zeros = True
+        self._trailing_zeros_suppressed = False
         self._current_tool: int | None = None
         self._in_header = False
 
@@ -1302,10 +1302,11 @@ class ExcellonParser:
             self._tool_definition(line)
 
     def _read_zeros(self, upper: str) -> None:
+        # Excellon: TZ keeps trailing zeros (leading suppressed), LZ keeps leading zeros (trailing suppressed).
         if ",TZ" in upper or upper.endswith("TZ"):
-            self._leading_zeros = False
+            self._trailing_zeros_suppressed = False
         elif ",LZ" in upper:
-            self._leading_zeros = True
+            self._trailing_zeros_suppressed = True
         match = re.search(r"(\d+)\.(\d+)", upper)
         if match:
             self._int_digits = len(match.group(1))
@@ -1369,12 +1370,12 @@ class ExcellonParser:
             text = text[1:]
         if "." in text:
             return sign * float(text) * self._unit_scale
-        if self._leading_zeros:
-            value = int(text) / (10.0 ** self._dec_digits)
-        else:
+        if self._trailing_zeros_suppressed:
             value = int(text.ljust(self._int_digits + self._dec_digits, "0")) / (
                 10.0 ** self._dec_digits
             )
+        else:
+            value = int(text) / (10.0 ** self._dec_digits)
         return sign * value * self._unit_scale
 
 

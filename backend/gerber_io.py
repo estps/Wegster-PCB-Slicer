@@ -1245,6 +1245,9 @@ class ExcellonParser:
         self._leading_zeros = True
         self._current_tool: int | None = None
         self._in_header = False
+        # Excellon coordinates are modal: an omitted axis keeps its previous value.
+        self._last_x: float | None = None
+        self._last_y: float | None = None
 
     @classmethod
     def parse_file(cls, path: Path, plated: bool = True) -> "ExcellonParser":
@@ -1348,11 +1351,22 @@ class ExcellonParser:
         if x is None and y is None:
             return
 
+        if x is None:
+            x = self._last_x
+        if y is None:
+            y = self._last_y
+        if x is None or y is None:
+            self.warnings.append(f"drill hit with no previous modal coordinate, assuming 0: {line!r}")
+            x = 0.0 if x is None else x
+            y = 0.0 if y is None else y
+        self._last_x = x
+        self._last_y = y
+
         diameter = self.tools.get(self._current_tool, 0.0)
         self.holes.append(
             DrillHole(
-                x=x or 0.0,
-                y=y or 0.0,
+                x=x,
+                y=y,
                 diameter=diameter,
                 plated=self.plated,
                 tool=self._current_tool,

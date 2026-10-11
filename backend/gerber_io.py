@@ -590,8 +590,13 @@ class MacroDef:
             numbers = [eval_macro_expression(p, variables) for p in parts[1:]]
             if not numbers:
                 continue
-            exposure = numbers[0]
-            geom = self._primitive(code, numbers[1:])
+            # Moiré (6) and thermal (7) carry no exposure modifier
+            if code in (6, 7):
+                exposure = 1.0
+                geom = self._primitive(code, numbers)
+            else:
+                exposure = numbers[0]
+                geom = self._primitive(code, numbers[1:])
             if geom is None or geom.is_empty:
                 continue
             if exposure >= 0.5:
@@ -618,11 +623,12 @@ class MacroDef:
             return affinity.translate(_rotate(geom, rotation), xoff=cx, yoff=cy)
 
         if code == 4:
+            # 4,exposure,#vertices,X0,Y0,...,Xn,Yn,rotation — n+1 points, last repeats first
             count = int(get(0))
-            cx, cy, rotation = get(1), get(2), get(3)
             coords = []
-            for k in range(count):
-                coords.append((get(4 + 2 * k), get(5 + 2 * k)))
+            for k in range(count + 1):
+                coords.append((get(1 + 2 * k), get(2 + 2 * k)))
+            rotation = get(3 + 2 * count)
             if len(coords) < 3:
                 return None
             if coords[0] != coords[-1]:
@@ -630,7 +636,7 @@ class MacroDef:
             poly = Polygon(coords)
             if not poly.is_valid:
                 poly = poly.buffer(0)
-            return affinity.translate(_rotate(poly, rotation), xoff=cx, yoff=cy)
+            return _rotate(poly, rotation)
 
         if code == 5:
             vertices, cx, cy, diameter, rotation = (
@@ -721,22 +727,23 @@ class MacroDef:
                 )
             return affinity.translate(_rotate(disc, rotation), xoff=cx, yoff=cy)
 
-        if code in (20, 21, 22):
+        if code == 20:
+            # 20,exposure,width,X1,Y1,X2,Y2,rotation — square line ends
+            width = get(0)
+            x1, y1, x2, y2, rotation = get(1), get(2), get(3), get(4), get(5)
+            line = LineString([(x1, y1), (x2, y2)])
+            geom = line.buffer(max(width, GRID_MM) / 2.0, cap_style="flat")
+            return _rotate(geom, rotation)
+
+        if code in (21, 22):
             width, height = get(0), get(1)
-            if code == 20:
-                x1, y1, x2, y2, rotation = get(2), get(3), get(4), get(5), get(6)
-                line = LineString([(x1, y1), (x2, y2)])
-                geom = line.buffer(
-                    max(width, GRID_MM) / 2.0, cap_style="round", quad_segs=16
-                )
-            else:
-                x, y, rotation = get(2), get(3), get(4)
-                if code == 21:
-                    x -= width / 2.0
-                    y -= height / 2.0
-                geom = Polygon(
-                    [(x, y), (x + width, y), (x + width, y + height), (x, y + height)]
-                )
+            x, y, rotation = get(2), get(3), get(4)
+            if code == 21:
+                x -= width / 2.0
+                y -= height / 2.0
+            geom = Polygon(
+                [(x, y), (x + width, y), (x + width, y + height), (x, y + height)]
+            )
             return _rotate(geom, rotation)
 
         return None

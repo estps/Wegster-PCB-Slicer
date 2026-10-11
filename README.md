@@ -31,6 +31,9 @@ the board.
 - **Double-sided registration** — two deep pin holes define the flip axis (the
   perpendicular bisector of the pair), so the back layer registers without
   re-zeroing X or Y.
+- **Back-side-only jobs** — tick only *Back copper* and the whole job (copper,
+  holes and cut-out) is mirrored, so you mount the blank face down once and
+  never flip it.
 - **G-code verification** — every generated file is re-read and checked against
   the machine envelope before you ever hit cycle start.
 - **G-code viewer** — open any `.gcode`, scrub through it, and see rapids,

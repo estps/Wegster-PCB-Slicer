@@ -10,6 +10,7 @@ from pcb_engine import (
     DrillHit,
     Polyline,
     SlicerConfig,
+    ToolSpec,
     ToolpathGroup,
     ToolpathPlan,
 )
@@ -255,6 +256,13 @@ def _emit_polyline_at_depth(
     return polyline.length
 
 
+def _drill_feed_for(tool: ToolSpec, profile: MachineProfile) -> float:
+    # A tool-database plunge rate wins; otherwise fall back to the profile's drill feed.
+    if tool.plunge_rate > 0:
+        return float(tool.plunge_rate)
+    return float(profile.drill_feed)
+
+
 def _emit_drill(
     builder: GCodeBuilder,
     hole: DrillHit,
@@ -341,10 +349,13 @@ def _estimate_seconds(plan: ToolpathPlan, profile: MachineProfile, config: Slice
         plunge_count = len(group.polylines) * passes
         seconds += plunge_count * (plunge_distance / max(plunge_feed, 1.0) * 60.0)
         seconds += plunge_count * 2.0
-        for _hole in group.holes:
-            depth = abs(group.depth.total_depth)
+        drill_feed = _drill_feed_for(group.tool, profile)
+        for hole in group.holes:
+            depth = abs(
+                hole.depth if hole.depth is not None else group.depth.total_depth
+            )
             pecks = max(1, int(math.ceil(depth / max(config.peck_depth, 1e-3))))
-            seconds += pecks * (depth / max(profile.drill_feed, 1.0) * 60.0)
+            seconds += pecks * (depth / max(drill_feed, 1.0) * 60.0)
             seconds += pecks * 1.5
     return seconds
 
@@ -427,6 +438,7 @@ def emit_program(
             builder.dwell(profile.spindle_spinup_dwell)
 
         if group.holes:
+            drill_feed = _drill_feed_for(group.tool, profile)
             for hole in group.holes:
                 total = (
                     hole.depth
@@ -434,7 +446,7 @@ def emit_program(
                     else group.depth.total_depth
                 )
                 _emit_drill(
-                    builder, hole, total, config.peck_depth, profile, plunge_feed
+                    builder, hole, total, config.peck_depth, profile, drill_feed
                 )
         else:
             passes = group.depth.passes()

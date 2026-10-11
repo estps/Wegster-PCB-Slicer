@@ -1,6 +1,8 @@
 
 from __future__ import annotations
 
+import copy
+import itertools
 import math
 import threading
 from pathlib import Path
@@ -64,34 +66,52 @@ class Planner(QObject):
         super().__init__(parent)
         self._lock = threading.Lock()
         self._alive = True
+        self._ids = itertools.count(1)
+        self._latest = 0
 
     def request(
         self, project: PcbProject, config: SlicerConfig, profile: MachineProfile
     ) -> None:
+        # Snapshot so slider changes during computation cannot leak into this plan.
+        config = copy.deepcopy(config)
+        profile = copy.deepcopy(profile)
+        request_id = next(self._ids)
+        self._latest = request_id
         thread = threading.Thread(
-            target=self._run, args=(project, config, profile), daemon=True
+            target=self._run,
+            args=(request_id, project, config, profile),
+            daemon=True,
         )
         thread.start()
 
     def shutdown(self) -> None:
         self._alive = False
 
+    def _is_current(self, request_id: int) -> bool:
+        return self._alive and request_id == self._latest
+
     def _run(
-        self, project: PcbProject, config: SlicerConfig, profile: MachineProfile
+        self,
+        request_id: int,
+        project: PcbProject,
+        config: SlicerConfig,
+        profile: MachineProfile,
     ) -> None:
         with self._lock:
+            if not self._is_current(request_id):
+                return
             try:
                 plan = plan_toolpaths(project, config)
                 report = verify_plan(plan, config, profile)
             except (SlicerError, GCodeError) as exc:
-                if self._alive:
+                if self._is_current(request_id):
                     self.failed.emit(str(exc))
                 return
             except Exception as exc:
-                if self._alive:
+                if self._is_current(request_id):
                     self.failed.emit(f"{type(exc).__name__}: {exc}")
                 return
-            if self._alive:
+            if self._is_current(request_id):
                 self.finished.emit(plan, report)
 
 

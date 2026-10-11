@@ -143,7 +143,10 @@ def plan_export_files(plan: ToolpathPlan, config: SlicerConfig) -> list[ExportFi
     for group in top:
         sequence.append((group.kind, group.name, [group], False))
 
-    flip_pending = bool(bottom) and bool(top or drill_groups)
+    # A bottom-only job is milled entirely face down (everything is mirrored),
+    # so a flip is only ever needed when the front side was milled as well.
+    double_sided = bool(config.mill_top and config.mill_bottom)
+    flip_pending = double_sided and bool(bottom) and bool(top or drill_groups)
     for group in bottom:
         sequence.append((group.kind, group.name, [group], flip_pending))
         flip_pending = False
@@ -154,7 +157,6 @@ def plan_export_files(plan: ToolpathPlan, config: SlicerConfig) -> list[ExportFi
     for group in outline:
         sequence.append(("cutout", group.name, [group], False))
 
-    double_sided = bool(config.mill_top and config.mill_bottom)
     files: list[ExportFile] = []
     for index, (kind, title, groups, flip) in enumerate(sequence, start=1):
         side = groups[0].side if groups else "top"
@@ -173,7 +175,8 @@ def plan_export_files(plan: ToolpathPlan, config: SlicerConfig) -> list[ExportFi
     return files
 
 
-def _setup_note(export_file: ExportFile, double_sided: bool) -> str:
+def _setup_note(export_file: ExportFile, config: SlicerConfig) -> str:
+    double_sided = bool(config.mill_top and config.mill_bottom)
     if export_file.requires_flip_before:
         return (
             "FLIP THE BOARD OVER before running this file, then re-zero Z on the "
@@ -181,6 +184,11 @@ def _setup_note(export_file: ExportFile, double_sided: bool) -> str:
         )
     if double_sided and export_file.side == "bottom":
         return "Back side - the artwork is mirrored so it lines up after flipping."
+    if config.mill_bottom and not config.mill_top:
+        return (
+            "Back side only - the whole job is mirrored. Mount the blank with the "
+            "back copper facing up; no flipping needed."
+        )
     return ""
 
 
@@ -190,8 +198,6 @@ def build_programs(
     profile: MachineProfile,
     stem: str,
 ) -> tuple[list[ExportFile], list[tuple[str, str]]]:
-    double_sided = bool(config.mill_top and config.mill_bottom)
-
     if config.split_output:
         files = plan_export_files(plan, config)
     else:
@@ -215,7 +221,7 @@ def build_programs(
             f"{stem} - {export_file.title}",
             board=plan.board,
             preamble=plan.warnings,
-            setup_note=_setup_note(export_file, double_sided),
+            setup_note=_setup_note(export_file, config),
         )
         export_file.program = program
         programs.append((export_file.filename, program))
@@ -319,7 +325,13 @@ def build_readme(
     add("|---|---|")
     add(f"| Board size | {board.width:.2f} × {board.height:.2f} mm |")
     add(f"| Board thickness | {config.board_thickness:.2f} mm |")
-    add(f"| Sides | {'Front **and back** (double-sided)' if double else 'Front only'} |")
+    if double:
+        sides_text = "Front **and back** (double-sided)"
+    elif config.mill_bottom:
+        sides_text = "**Back only** (whole job mirrored, board lies face down)"
+    else:
+        sides_text = "Front only"
+    add(f"| Sides | {sides_text} |")
     offset_x, offset_y = board.offset
     margin_text = (
         f"{offset_x:.1f} mm"
@@ -356,6 +368,9 @@ def build_readme(
         f"**{board.width + 2 * offset_x:.0f} × {board.height + 2 * offset_y:.0f} mm** "
         "and flat.")
     add("- [ ] Blank is clamped/glued down flat, with a sacrificial spoilboard underneath.")
+    if config.mill_bottom and not config.mill_top:
+        add("- [ ] Blank is mounted with the **back (solder) side facing up** — every "
+            "file in this job is mirrored for that orientation, nothing is flipped.")
     add("- [ ] X and Y zeroed at the lower-left corner of the blank "
         f"(+{config.margin:.1f} mm margin).")
     add("- [ ] Z zeroed with the tool **just touching** the copper surface.")
@@ -587,10 +602,11 @@ def build_readme(
         "| Board shifts mid-cut | Not clamped firmly enough | Re-clamp; cut the "
         "outline file last so the part stays attached |"
     )
-    add(
-        "| Back side misaligned | Board not re-registered after flipping | Use the "
-        "registration pin method in section 5 |"
-    )
+    if double:
+        add(
+            "| Back side misaligned | Board not re-registered after flipping | Use the "
+            "registration pin method in section 6 |"
+        )
     add("")
 
     add("---")

@@ -27,7 +27,8 @@ the board.
   the pad openings so the pads still take solder.
 - **Board cut-out with break-away tabs** — tabs are nudged onto straight runs so
   they snap cleanly.
-- **Peck drilling** — one file per bit, full retracts to clear chips.
+- **Peck drilling** — one file per bit, short retracts between pecks to clear
+  chips without feeding through air.
 - **Double-sided registration** — two deep pin holes define the flip axis (the
   perpendicular bisector of the pair), so the back layer registers without
   re-zeroing X or Y.

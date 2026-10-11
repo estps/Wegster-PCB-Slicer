@@ -262,6 +262,7 @@ def _emit_drill(
     peck_depth: float,
     profile: MachineProfile,
     drill_feed: float | None = None,
+    peck_retract: float = 0.0,
 ) -> None:
     builder.rapid(x=hole.x, y=hole.y)
     builder.rapid(z=profile.rapid_z)
@@ -269,16 +270,26 @@ def _emit_drill(
     drill_feed = profile.drill_feed if drill_feed is None else drill_feed
     total = abs(total_depth)
     step = max(peck_depth, 0.05)
+    # Gap left above the previous peck bottom when rapiding back down.
+    approach_clearance = 0.1
     previous = 0.0
+    retract_z = profile.rapid_z
     travelled = 0.0
     while travelled < total - 1e-9:
         travelled = min(total, travelled + step)
         target = -travelled
         if target >= previous - 1e-9:
             continue
+        if previous < 0.0:
+            approach_z = min(retract_z, previous + approach_clearance)
+            builder.rapid(z=approach_z)
         builder.feed_move(z=target, feed=drill_feed)
-        builder.rapid(z=profile.rapid_z)
         previous = target
+        if peck_retract > 0.0 and travelled < total - 1e-9:
+            retract_z = min(profile.rapid_z, target + peck_retract)
+        else:
+            retract_z = profile.rapid_z
+        builder.rapid(z=retract_z)
 
 
 def _group_header(
@@ -344,7 +355,8 @@ def _estimate_seconds(plan: ToolpathPlan, profile: MachineProfile, config: Slice
         for _hole in group.holes:
             depth = abs(group.depth.total_depth)
             pecks = max(1, int(math.ceil(depth / max(config.peck_depth, 1e-3))))
-            seconds += pecks * (depth / max(profile.drill_feed, 1.0) * 60.0)
+            feed_distance = depth + (pecks - 1) * 0.1
+            seconds += feed_distance / max(profile.drill_feed, 1.0) * 60.0
             seconds += pecks * 1.5
     return seconds
 
@@ -434,7 +446,8 @@ def emit_program(
                     else group.depth.total_depth
                 )
                 _emit_drill(
-                    builder, hole, total, config.peck_depth, profile, plunge_feed
+                    builder, hole, total, config.peck_depth, profile, plunge_feed,
+                    peck_retract=config.peck_retract,
                 )
         else:
             passes = group.depth.passes()

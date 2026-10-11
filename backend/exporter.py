@@ -288,6 +288,15 @@ def _fmt_minutes(minutes: float) -> str:
     return f"{mins} min"
 
 
+def _flip_direction_text(config: SlicerConfig) -> str:
+    """Human wording for how the board is turned over, matching pcb_engine's mirror."""
+    if config.alignment_holes:
+        return "about the line between the two alignment pins (it swaps the pins over)"
+    if config.flip_axis == "vertical":
+        return "left-to-right (about the vertical axis)"
+    return "end-over-end (about the horizontal axis)"
+
+
 def build_readme(
     plan: ToolpathPlan,
     config: SlicerConfig,
@@ -395,7 +404,7 @@ def build_readme(
             add("> ### ⚠️ FLIP THE BOARD BEFORE THIS FILE")
             add(">")
             add("> 1. Remove the blank from the machine.")
-            add("> 2. Turn it over (left-to-right, i.e. about the vertical axis).")
+            add(f"> 2. Turn it over {_flip_direction_text(config)}.")
             add("> 3. Re-clamp it in exactly the same place — or drop it back over "
                 "the registration pins (see section 6).")
             add("> 4. **Re-zero Z** on the new top surface — it will not be the same height.")
@@ -438,13 +447,9 @@ def build_readme(
             )
             add("")
         else:
-            axis = (
-                "left-to-right (about the vertical axis)"
-                if config.flip_axis == "vertical"
-                else "end-over-end (about the horizontal axis)"
-            )
             add(
-                f"**The board is turned over {axis}.** The back program is the front "
+                f"**The board is turned over {_flip_direction_text(config)}.** "
+                "The back program is the front "
                 "program mirrored about that same axis, so you never re-zero X or Y "
                 "between the two sides - only Z."
             )

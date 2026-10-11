@@ -670,6 +670,13 @@ def build_board(project: PcbProject, config: SlicerConfig) -> BoardGeometry:
         axis = offset_y + source_height / 2.0
         return affinity.scale(geom, xfact=1.0, yfact=-1.0, origin=(0.0, axis))
 
+    # A bottom-only job is milled entirely with the board face down, so the
+    # outline and holes must live in the same mirrored frame as the copper.
+    bottom_only = config.mill_bottom and not config.mill_top
+    if bottom_only:
+        flipped_outline = flip(machine_outline, "bottom")
+        machine_outline = largest_polygon(flipped_outline) or machine_outline
+
     copper: dict[str, BaseGeometry] = {}
     silkscreen: dict[str, BaseGeometry] = {}
     pads: dict[str, BaseGeometry] = {}
@@ -695,15 +702,19 @@ def build_board(project: PcbProject, config: SlicerConfig) -> BoardGeometry:
                 continue
             store[side] = flip(geom, side)
 
-    holes = [
-        DrillHit(
-            x=hole.x + shift_x,
-            y=hole.y + shift_y,
-            diameter=hole.diameter,
-            plated=hole.plated,
+    holes = []
+    for hole in project.all_holes:
+        point = Point(hole.x + shift_x, hole.y + shift_y)
+        if bottom_only:
+            point = flip(point, "bottom")
+        holes.append(
+            DrillHit(
+                x=float(point.x),
+                y=float(point.y),
+                diameter=hole.diameter,
+                plated=hole.plated,
+            )
         )
-        for hole in project.all_holes
-    ]
 
     return BoardGeometry(
         outline=machine_outline,

@@ -143,16 +143,19 @@ def plan_export_files(plan: ToolpathPlan, config: SlicerConfig) -> list[ExportFi
     for group in top:
         sequence.append((group.kind, group.name, [group], False))
 
-    flip_pending = bool(bottom) and bool(top or drill_groups)
+    # Drilling and the cut-out use top-side coordinates, so the drill file
+    # always runs before the flip and the board is flipped back for the cut-out.
+    if drill_groups and not config.drill_first:
+        sequence.append(("drill", "Drill all holes", drill_groups, False))
+
+    flipped = bool(bottom) and bool(top or drill_groups)
+    flip_pending = flipped
     for group in bottom:
         sequence.append((group.kind, group.name, [group], flip_pending))
         flip_pending = False
 
-    if drill_groups and not config.drill_first:
-        sequence.append(("drill", "Drill all holes", drill_groups, False))
-
     for group in outline:
-        sequence.append(("cutout", group.name, [group], False))
+        sequence.append(("cutout", group.name, [group], flipped))
 
     double_sided = bool(config.mill_top and config.mill_bottom)
     files: list[ExportFile] = []
@@ -174,6 +177,11 @@ def plan_export_files(plan: ToolpathPlan, config: SlicerConfig) -> list[ExportFi
 
 
 def _setup_note(export_file: ExportFile, double_sided: bool) -> str:
+    if export_file.requires_flip_before and export_file.side == "top":
+        return (
+            "FLIP THE BOARD BACK to the front side (component side up) before "
+            "running this file, then re-zero Z. See README.md."
+        )
     if export_file.requires_flip_before:
         return (
             "FLIP THE BOARD OVER before running this file, then re-zero Z on the "
@@ -373,7 +381,10 @@ def build_readme(
     add("")
     step = 0
     for export_file in package.files:
-        if export_file.requires_flip_before:
+        if export_file.requires_flip_before and export_file.side == "top":
+            step += 1
+            add(f"{step}. **FLIP THE BOARD BACK** to the front side — see section 6")
+        elif export_file.requires_flip_before:
             step += 1
             add(f"{step}. **FLIP THE BOARD** — see section 6")
         step += 1
@@ -391,7 +402,19 @@ def build_readme(
         add("")
         add(f"**{export_file.title}**")
         add("")
-        if export_file.requires_flip_before:
+        if export_file.requires_flip_before and export_file.side == "top":
+            add("> ### ⚠️ FLIP THE BOARD BACK BEFORE THIS FILE")
+            add(">")
+            add("> This file uses front-side coordinates, so the board must be the "
+                "same way up as it was for the front copper.")
+            add(">")
+            add("> 1. Remove the blank from the machine.")
+            add("> 2. Turn it back over so the front side (component side) is up again.")
+            add("> 3. Re-clamp it in exactly the same place — or drop it back over "
+                "the registration pins (see section 6).")
+            add("> 4. **Re-zero Z** on the front surface.")
+            add("")
+        elif export_file.requires_flip_before:
             add("> ### ⚠️ FLIP THE BOARD BEFORE THIS FILE")
             add(">")
             add("> 1. Remove the blank from the machine.")

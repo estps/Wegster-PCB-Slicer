@@ -308,8 +308,12 @@ def test_export_package(archive: Path) -> None:
                 "a dedicated board_cutout file is written",
             )
             check(
-                sum(1 for f in package.files if f.requires_flip_before) == 1,
-                "exactly one file is marked as needing a board flip",
+                sum(1 for f in package.files if f.requires_flip_before) == 2,
+                "two files are marked as needing a board flip (bottom side and cut-out)",
+            )
+            check(
+                package.files[-1].kind == "cutout" and package.files[-1].requires_flip_before,
+                "the cut-out flips the board back to the front side",
             )
             check(
                 all(f.path is not None and f.path.exists() for f in package.files),

@@ -638,6 +638,7 @@ class MainWindow(QMainWindow):
         self.origin_combo = QComboBox()
         self.origin_combo.addItem("Lower-left corner", "lower_left")
         self.origin_combo.addItem("Board centre", "center")
+        self.origin_combo.addItem("Top-left alignment pin (+Y down)", "pin_top_left")
         self.origin_combo.currentIndexChanged.connect(
             lambda _: self._apply(
                 lambda v: setattr(self.config, "origin_mode", v),

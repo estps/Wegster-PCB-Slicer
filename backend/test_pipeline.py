@@ -1309,6 +1309,98 @@ def test_copper_preview_shape(archive: Path) -> None:
         project.cleanup()
 
 
+def test_pin_origin() -> None:
+    print("\n== Work origin at the top-left pin ==")
+    import tempfile
+
+    from gerber_io import load_files
+    from wegstr_gcode import WEGSTR_LIGHT, emit_plan, work_envelope, work_origin
+
+    def rectangle(width: float, height: float) -> str:
+        def c(v: float) -> int:
+            return int(round(v * 1_000_000))
+
+        return (
+            "%FSLAX46Y46*%\n%MOMM*%\n%LPD*%\nG01*\nG90*\n%ADD10C,0.150000*%\n"
+            f"D10*\nX0Y0D02*\nX{c(width)}Y0D01*\nX{c(width)}Y{c(height)}D01*\n"
+            f"X0Y{c(height)}D01*\nX0Y0D01*\nM02*\n"
+        )
+
+    with tempfile.TemporaryDirectory(prefix="wegstr_origin_") as tmp:
+        outline = Path(tmp) / "board.GKO"
+        outline.write_text(rectangle(150.0, 90.0), encoding="utf-8", newline="\n")
+        project = load_files([outline])
+        try:
+            config = SlicerConfig()
+            config.alignment_holes = True
+            config.alignment_pins_auto = True
+            config.mill_bottom = True
+            config.origin_mode = "pin_top_left"
+            plan = plan_toolpaths(project, config)
+
+            pins = plan.board.pins
+            check(pins is not None, "pins exist for the origin mode")
+            origin_x, origin_y, y_down = work_origin(config, plan.board)
+            check(y_down, "the pin origin flips Y so +Y runs down the machine")
+            if pins is not None:
+                check(
+                    abs(origin_x - min(p[0] for p in pins)) < 1e-6,
+                    f"origin X is the left pin ({origin_x:.2f})",
+                )
+                check(
+                    abs(origin_y - pins[0][1]) < 0.5,
+                    f"origin Y is the pin line ({origin_y:.2f})",
+                )
+
+            low_x, high_x, low_y, high_y = work_envelope(
+                config, WEGSTR_LIGHT, plan.board
+            )
+            check(low_x < 0.0, f"the envelope allows the board's {low_x:.1f} mm overhang")
+            check(high_x <= 140.0, f"the envelope still ends inside the bed ({high_x:.1f})")
+            check(low_y <= 0.0 <= high_y, "Y zero sits inside the envelope")
+
+            program = emit_plan(plan, config, program_name="origin-test")
+            xs: list[float] = []
+            ys: list[float] = []
+            for line in program.splitlines():
+                for token in line.split():
+                    try:
+                        if token.startswith("X"):
+                            xs.append(float(token[1:]))
+                        elif token.startswith("Y"):
+                            ys.append(float(token[1:]))
+                    except ValueError:
+                        continue
+            check(
+                any("top-left alignment pin" in line for line in program.splitlines()),
+                "the header documents the pin origin",
+            )
+            check(
+                min(ys) >= -0.001,
+                f"no Y move goes above the pin (min Y {min(ys):.2f})",
+            )
+            check(
+                max(ys) <= 160.0,
+                f"the board sits below the pin (max Y {max(ys):.2f})",
+            )
+            check(
+                max(xs) - min(xs) > 80.0,
+                f"X spans the board ({min(xs):.1f}..{max(xs):.1f})",
+            )
+
+            report = verify_plan(plan, config, WEGSTR_LIGHT)
+            check(report.ok, "the pin-origin program verifies clean")
+            bounds = report.stats.get("xy_bounds")
+            check(bounds is not None, "verification reports bounds")
+            if bounds:
+                check(
+                    bounds[0] < 0.0,
+                    f"verification accepts the {bounds[0]:.1f} mm overhang",
+                )
+        finally:
+            project.cleanup()
+
+
 def main() -> int:
     import tempfile
 
@@ -1339,6 +1431,7 @@ def main() -> int:
     test_machine_envelope()
     test_rotation_and_pins()
     test_copper_preview_shape(archive)
+    test_pin_origin()
     test_clearance_and_feeds(archive)
     test_updater_versions()
 

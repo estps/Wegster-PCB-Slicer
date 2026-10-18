@@ -86,8 +86,15 @@ WEGSTR_LIGHT = MachineProfile()
 
 class GCodeBuilder:
 
-    def __init__(self, profile: MachineProfile) -> None:
+    def __init__(
+        self,
+        profile: MachineProfile,
+        origin: tuple[float, float] = (0.0, 0.0),
+        y_down: bool = False,
+    ) -> None:
         self.profile = profile
+        self.origin_x, self.origin_y = origin
+        self.y_down = y_down
         self.lines: list[str] = []
         self._last_motion: str | None = None
         self._last_x: float | None = None
@@ -96,6 +103,14 @@ class GCodeBuilder:
         self._last_feed: float | None = None
         self._line_number = 0
         self._use_line_numbers = profile.line_numbers
+
+    def _work_x(self, value: float) -> float:
+        return value - self.origin_x
+
+    def _work_y(self, value: float) -> float:
+        if self.y_down:
+            return self.origin_y - value
+        return value - self.origin_y
 
 
     def _coord(self, value: float) -> str:
@@ -150,6 +165,10 @@ class GCodeBuilder:
         z: float | None = None,
         feed: float | None = None,
     ) -> None:
+        if x is not None:
+            x = self._work_x(x)
+        if y is not None:
+            y = self._work_y(y)
         parts: list[str] = []
         if motion != self._last_motion:
             parts.append(motion)
@@ -370,6 +389,35 @@ def _margin_text(board: object | None, config: SlicerConfig) -> str:
     return f"{offset_x:.1f} x {offset_y:.1f} mm"
 
 
+def work_origin(
+    config: SlicerConfig, board: object | None
+) -> tuple[float, float, bool]:
+    if config.origin_mode != "pin_top_left" or board is None:
+        return (0.0, 0.0, False)
+    pins = getattr(board, "pins", None)
+    if not pins:
+        return (0.0, 0.0, False)
+    ordered = sorted(pins, key=lambda pin: (pin[0], -pin[1]))
+    pin = ordered[0]
+    return (float(pin[0]), float(pin[1]), True)
+
+
+def work_envelope(
+    config: SlicerConfig,
+    profile: MachineProfile,
+    board: object | None,
+) -> tuple[float, float, float, float]:
+    origin_x, origin_y, y_down = work_origin(config, board)
+    if not y_down:
+        return (0.0 - origin_x, profile.work_x - origin_x, 0.0 - origin_y, profile.work_y - origin_y)
+    return (
+        0.0 - origin_x,
+        profile.work_x - origin_x,
+        origin_y - profile.work_y,
+        origin_y - 0.0,
+    )
+
+
 def emit_program(
     groups: Sequence[ToolpathGroup],
     config: SlicerConfig,
@@ -385,7 +433,8 @@ def emit_program(
     if not groups:
         raise GCodeError("No operations to emit.")
 
-    builder = GCodeBuilder(profile)
+    origin_x, origin_y, y_down = work_origin(config, board)
+    builder = GCodeBuilder(profile, origin=(origin_x, origin_y), y_down=y_down)
 
     builder.raw("%")
     builder.comment(f"Program   : {program_name}")
@@ -396,10 +445,16 @@ def emit_program(
             f"Board     : {board.width:.2f} x {board.height:.2f} mm "
             f"({board.source_size[0]:.2f} x {board.source_size[1]:.2f} mm artwork)"
         )
-    builder.comment(
-        f"Origin    : {config.origin_mode.replace('_', '-')} + "
-        f"{_margin_text(board, config)} margin"
-    )
+    if y_down:
+        builder.comment(
+            f"Origin    : X0 Y0 at the top-left alignment pin "
+            f"({origin_x:.1f}, {origin_y:.1f} mm); +X right, +Y down"
+        )
+    else:
+        builder.comment(
+            f"Origin    : {config.origin_mode.replace('_', '-')} + "
+            f"{_margin_text(board, config)} margin"
+        )
     if setup_note:
         builder.comment(f"Setup     : {setup_note}")
     builder.comment("")
@@ -456,7 +511,7 @@ def emit_program(
     builder.spindle_off()
     if profile.return_home_at_end:
         builder.rapid(z=profile.tool_change_z)
-        builder.rapid(x=0.0, y=0.0)
+        builder.rapid(x=builder.origin_x, y=builder.origin_y)
         builder.rapid(z=profile.safe_z)
     builder.line(profile.program_end)
     builder.raw("%")

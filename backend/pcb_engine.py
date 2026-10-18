@@ -198,7 +198,7 @@ class SlicerConfig:
         problems: list[str] = []
         if self.machine_x <= 0 or self.machine_y <= 0 or self.machine_z <= 0:
             problems.append("Machine envelope must be positive.")
-        if self.origin_mode not in ("lower_left", "center"):
+        if self.origin_mode not in ("lower_left", "center", "pin_top_left"):
             problems.append(f"Unknown origin mode {self.origin_mode!r}.")
         if self.isolation_enabled and self.isolation_passes < 1:
             problems.append("Isolation passes must be at least 1.")
@@ -1235,6 +1235,12 @@ def plan_toolpaths(project: PcbProject, config: SlicerConfig) -> ToolpathPlan:
 
     board = build_board(project, config)
     plan = ToolpathPlan(board=board)
+
+    if config.origin_mode == "pin_top_left" and not config.alignment_holes:
+        plan.warnings.append(
+            "Work origin is set to the top-left alignment pin, but the alignment "
+            "pins are off, so the origin fell back to the bed corner."
+        )
 
     if board.rotation:
         plan.warnings.append(

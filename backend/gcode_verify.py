@@ -58,9 +58,15 @@ class VerificationReport:
 
 class _Interpreter:
 
-    def __init__(self, profile: MachineProfile, max_depth: float | None) -> None:
+    def __init__(
+        self,
+        profile: MachineProfile,
+        max_depth: float | None,
+        envelope: tuple[float, float, float, float] | None = None,
+    ) -> None:
         self.profile = profile
         self.max_depth = max_depth
+        self.envelope = envelope or (0.0, profile.work_x, 0.0, profile.work_y)
 
         self.units_mm = False
         self.absolute = False
@@ -288,23 +294,25 @@ class _Interpreter:
 
         if self.xy_bounds is not None:
             min_x, min_y, max_x, max_y = self.xy_bounds
-            if min_x < -0.001 or min_y < -0.001:
+            low_x, high_x, low_y, high_y = self.envelope
+            if min_x < low_x - 0.001 or min_y < low_y - 0.001:
                 self.error(
                     0,
-                    f"toolpath goes negative (X{min_x:.3f}, Y{min_y:.3f}); "
-                    "check the work origin",
+                    f"toolpath leaves the work area (X{min_x:.3f}, Y{min_y:.3f}); "
+                    f"the allowed range is X{low_x:.1f}..{high_x:.1f} "
+                    f"Y{low_y:.1f}..{high_y:.1f}",
                 )
-            if max_x > profile.work_x + 0.001:
+            if max_x > high_x + 0.001:
                 self.error(
                     0,
                     f"toolpath reaches X{max_x:.3f} which exceeds the "
-                    f"{profile.work_x:.0f} mm work area",
+                    f"{high_x:.1f} mm limit at this origin",
                 )
-            if max_y > profile.work_y + 0.001:
+            if max_y > high_y + 0.001:
                 self.error(
                     0,
                     f"toolpath reaches Y{max_y:.3f} which exceeds the "
-                    f"{profile.work_y:.0f} mm work area",
+                    f"{high_y:.1f} mm limit at this origin",
                 )
 
         if self.z_min < -profile.work_z:
@@ -341,8 +349,9 @@ def verify_program(
     profile: MachineProfile,
     max_cut_depth: float | None = None,
     source: str = "",
+    envelope: tuple[float, float, float, float] | None = None,
 ) -> VerificationReport:
-    interpreter = _Interpreter(profile, max_cut_depth)
+    interpreter = _Interpreter(profile, max_cut_depth, envelope)
     interpreter.run(text)
     report = VerificationReport(
         ok=not interpreter.issues or not any(
@@ -359,6 +368,7 @@ def verify_files(
     programs: Sequence[tuple[str, str]],
     profile: MachineProfile,
     max_cut_depth: float | None = None,
+    envelope: tuple[float, float, float, float] | None = None,
 ) -> VerificationReport:
     merged = VerificationReport(ok=True, source="package")
     total_lines = 0
@@ -369,7 +379,7 @@ def verify_files(
     z_min = 0.0
 
     for name, text in programs:
-        report = verify_program(text, profile, max_cut_depth, source=name)
+        report = verify_program(text, profile, max_cut_depth, source=name, envelope=envelope)
         for issue in report.issues:
             merged.issues.append(
                 Issue(issue.severity, issue.line, f"{name}: {issue.message}")

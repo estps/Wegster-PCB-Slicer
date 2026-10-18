@@ -14,7 +14,7 @@ from pcb_engine import (
     pin_axis,
     select_registration_holes,
 )
-from wegstr_gcode import MachineProfile, emit_program
+from wegstr_gcode import MachineProfile, emit_program, work_envelope
 
 __all__ = [
     "ExportFile",
@@ -221,8 +221,11 @@ def build_programs(
         programs.append((export_file.filename, program))
 
     max_depth = _max_cut_depth(plan, config)
+    envelope = work_envelope(config, profile, plan.board)
     for export_file, (_, program) in zip(files, programs):
-        report = verify_files([(export_file.filename, program)], profile, max_depth)
+        report = verify_files(
+            [(export_file.filename, program)], profile, max_depth, envelope
+        )
         export_file.estimated_minutes = report.stats.get("estimated_minutes", 0.0)
 
     return files, programs
@@ -235,7 +238,12 @@ def verify_plan(
     stem: str = "preview",
 ) -> VerificationReport:
     _, programs = build_programs(plan, config, profile, stem)
-    return verify_files(programs, profile, _max_cut_depth(plan, config))
+    return verify_files(
+        programs,
+        profile,
+        _max_cut_depth(plan, config),
+        work_envelope(config, profile, plan.board),
+    )
 
 
 def write_package(
@@ -262,7 +270,10 @@ def write_package(
         )
 
     package.verification = verify_files(
-        programs, profile, _max_cut_depth(plan, config)
+        programs,
+        profile,
+        _max_cut_depth(plan, config),
+        work_envelope(config, profile, plan.board),
     )
 
     readme = out_dir / "README.md"

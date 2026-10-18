@@ -288,16 +288,15 @@ def _emit_drill(
     drill_feed = profile.drill_feed if drill_feed is None else drill_feed
     total = abs(total_depth)
     step = max(peck_depth, 0.05)
-    previous = 0.0
-    travelled = 0.0
-    while travelled < total - 1e-9:
-        travelled = min(total, travelled + step)
-        target = -travelled
-        if target >= previous - 1e-9:
-            continue
-        builder.feed_move(z=target, feed=drill_feed)
+    clearance = min(0.5, step * 0.5)
+    reached = 0.0
+    while reached < total - 1e-9:
+        target = min(total, reached + step)
+        if reached > 1e-9:
+            builder.rapid(z=-reached + clearance)
+        builder.feed_move(z=-target, feed=drill_feed)
         builder.rapid(z=profile.rapid_z)
-        previous = target
+        reached = target
 
 
 def _group_header(
@@ -363,7 +362,9 @@ def _estimate_seconds(plan: ToolpathPlan, profile: MachineProfile, config: Slice
         for _hole in group.holes:
             depth = abs(group.depth.total_depth)
             pecks = max(1, int(math.ceil(depth / max(config.peck_depth, 1e-3))))
-            seconds += pecks * (depth / max(profile.drill_feed, 1.0) * 60.0)
+            seconds += depth / max(profile.drill_feed, 1.0) * 60.0
+            climb = profile.rapid_z * 2.0
+            seconds += pecks * (climb / max(profile.travel_feed, 1.0) * 60.0)
             seconds += pecks * 1.5
     return seconds
 

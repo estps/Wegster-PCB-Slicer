@@ -1627,6 +1627,59 @@ def test_depth_passes(archive: Path) -> None:
         project.cleanup()
 
 
+def test_aperture_macros() -> None:
+    print("\n== Aperture macros ==")
+    import tempfile
+
+    import shapely
+
+    from gerber_io import GerberParser
+
+    macro = (
+        "%FSLAX46Y46*%\n%MOMM*%\n"
+        "%AMRoundRect*\n"
+        "0 Rectangle with rounded corners*\n"
+        "0 $1 Rounding radius*\n"
+        "0 $2 $3 $4 $5 $6 $7 $8 $9 X,Y pos of 4 corners*\n"
+        "4,1,4,$2,$3,$4,$5,$6,$7,$8,$9,$2,$3,0*\n"
+        "1,1,$1+$1,$2,$3*\n"
+        "1,1,$1+$1,$4,$5*\n"
+        "1,1,$1+$1,$6,$7*\n"
+        "1,1,$1+$1,$8,$9*\n"
+        "20,1,$1+$1,$2,$3,$4,$5,0*\n"
+        "20,1,$1+$1,$4,$5,$6,$7,0*\n"
+        "20,1,$1+$1,$6,$7,$8,$9,0*\n"
+        "20,1,$1+$1,$8,$9,$2,$3,0*%\n"
+        "%ADD13RoundRect,0.250000X0.550000X0.550000X-0.550000X0.550000"
+        "X-0.550000X-0.550000X0.550000X-0.550000X0*%\n"
+        "G01*\nG90*\n%LPD*%\nD13*\nX1000000Y1000000D03*\nM02*\n"
+    )
+
+    with tempfile.TemporaryDirectory(prefix="wegstr_macro_") as tmp:
+        path = Path(tmp) / "roundrect.gbr"
+        path.write_text(macro, encoding="utf-8", newline="\n")
+        geometry, _warnings = GerberParser.parse_file(path)
+
+    parts = [p for p in shapely.get_parts(geometry) if not p.is_empty]
+    check(len(parts) == 1, f"the rounded rectangle parses as one shape ({len(parts)})")
+    combined = shapely.union_all(parts)
+    minx, miny, maxx, maxy = combined.bounds
+    width, height = maxx - minx, maxy - miny
+    check(
+        abs(width - 1.6) < 0.01 and abs(height - 1.6) < 0.01,
+        f"outline primitive uses its real corners ({width:.3f} x {height:.3f} mm)",
+    )
+    expected = 1.6 * 1.6 - (4 - 3.14159265) * 0.25 * 0.25
+    check(
+        abs(combined.area - expected) < 0.02,
+        f"corner bars fill the body (area {combined.area:.4f} vs {expected:.4f})",
+    )
+    check(
+        combined.area > 2.4,
+        "the pad is not left as a thin sliver",
+    )
+
+
 def main() -> int:
     import tempfile
 
@@ -1662,6 +1715,7 @@ def main() -> int:
     test_double_sided_layout()
     test_isolation_preset()
     test_depth_passes(archive)
+    test_aperture_macros()
     test_clearance_and_feeds(archive)
     test_updater_versions()
 

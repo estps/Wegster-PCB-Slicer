@@ -23,6 +23,7 @@ _KEY_PROFILE = "job/profile"
 _KEY_VIEWER = "viewer"
 _KEY_PANEL_HIDDEN = "view/panel_hidden"
 _KEY_ARCHIVE = "job/last_archive"
+_KEY_FILES = "job/last_files"
 _KEY_SHORTCUT = "install/start_menu_target"
 
 
@@ -146,6 +147,21 @@ class Preferences:
             return str(value) if value else None
         except Exception:
             return None
+
+    def save_files(self, paths: list[str]) -> None:
+        try:
+            self.settings.setValue(_KEY_FILES, json.dumps(list(paths)))
+            self.settings.sync()
+        except Exception:
+            pass
+
+    def restore_files(self) -> list[str]:
+        try:
+            raw = self.settings.value(_KEY_FILES)
+            data = json.loads(raw) if raw else []
+            return [str(item) for item in data if item]
+        except Exception:
+            return []
 
     def shortcut_target(self) -> str:
         try:

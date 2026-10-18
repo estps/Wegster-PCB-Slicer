@@ -36,6 +36,7 @@ __all__ = [
     "ExcellonParser",
     "detect_layers",
     "load_project",
+    "load_files",
 ]
 
 
@@ -1451,6 +1452,59 @@ def detect_layers(root: Path) -> list[tuple[Path, LayerType, float, str]]:
     return results
 
 
+def _add_layer_file(
+    project: PcbProject,
+    path: Path,
+    layer_type: LayerType,
+    confidence: float = 1.0,
+    reason: str = "",
+) -> bool:
+    if layer_type.is_drill:
+        parser = ExcellonParser.parse_file(
+            path, plated=layer_type is LayerType.DRILL_PTH
+        )
+        project.drills.append(
+            DrillData(
+                path=path,
+                layer_type=layer_type,
+                holes=parser.holes,
+                tools=parser.tools,
+                warnings=parser.warnings,
+            )
+        )
+        project.warnings.extend(f"{path.name}: {w}" for w in parser.warnings)
+        return bool(parser.holes)
+
+    if layer_type is LayerType.DOCUMENTATION:
+        return False
+
+    try:
+        geometry, warnings = GerberParser.parse_file(path)
+    except Exception as exc:
+        project.warnings.append(f"{path.name}: failed to parse ({exc})")
+        return False
+
+    project.layers.append(
+        LayerData(
+            path=path,
+            layer_type=layer_type,
+            confidence=confidence,
+            reason=reason,
+            geometry=geometry,
+            warnings=warnings,
+        )
+    )
+    project.warnings.extend(f"{path.name}: {w}" for w in warnings)
+    return True
+
+
+def _populate(
+    project: PcbProject, classified: Iterable[tuple[Path, LayerType, float, str]]
+) -> None:
+    for path, layer_type, confidence, reason in classified:
+        _add_layer_file(project, path, layer_type, confidence, reason)
+
+
 def load_project(source: str | Path) -> PcbProject:
     source = Path(source).expanduser()
     if not source.exists():
@@ -1480,44 +1534,59 @@ def load_project(source: str | Path) -> PcbProject:
         project.cleanup()
         raise GerberError(f"No Gerber or Excellon files found in {source}")
 
-    for path, layer_type, confidence, reason in classified:
-        if layer_type.is_drill:
-            parser = ExcellonParser.parse_file(
-                path, plated=layer_type is LayerType.DRILL_PTH
-            )
-            drill = DrillData(
-                path=path,
-                layer_type=layer_type,
-                holes=parser.holes,
-                tools=parser.tools,
-                warnings=parser.warnings,
-            )
-            project.drills.append(drill)
-            project.warnings.extend(f"{path.name}: {w}" for w in parser.warnings)
-            continue
-
-        if layer_type is LayerType.DOCUMENTATION:
-            continue
-
-        try:
-            geometry, warnings = GerberParser.parse_file(path)
-        except Exception as exc:
-            project.warnings.append(f"{path.name}: failed to parse ({exc})")
-            continue
-
-        data = LayerData(
-            path=path,
-            layer_type=layer_type,
-            confidence=confidence,
-            reason=reason,
-            geometry=geometry,
-            warnings=warnings,
-        )
-        project.layers.append(data)
-        project.warnings.extend(f"{path.name}: {w}" for w in warnings)
+    _populate(project, classified)
 
     if not project.layers and not project.drills:
         project.cleanup()
         raise GerberError(f"No parsable layers in {source}")
 
+    return project
+
+
+def load_files(
+    paths: Iterable[str | Path],
+    roles: dict[str, str] | None = None,
+) -> PcbProject:
+    resolved: list[Path] = []
+    seen: set[str] = set()
+    for item in paths:
+        path = Path(item).expanduser()
+        if not path.is_file():
+            raise FileNotFoundError(f"Not a file: {path}")
+        key = str(path.resolve()).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        resolved.append(path)
+
+    if not resolved:
+        raise GerberError("No files given.")
+
+    overrides = {k.lower(): v for k, v in (roles or {}).items()}
+    classified: list[tuple[Path, LayerType, float, str]] = []
+    for path in resolved:
+        override = overrides.get(path.name.lower()) or overrides.get(str(path).lower())
+        if override:
+            try:
+                layer_type = LayerType(override)
+            except ValueError as exc:
+                raise GerberError(f"Unknown layer role {override!r}") from exc
+            classified.append((path, layer_type, 1.0, "role chosen by the caller"))
+            continue
+        layer_type, confidence, reason = classify_file(path)
+        classified.append((path, layer_type, confidence, reason))
+
+    project = PcbProject(source=resolved[0].parent)
+    _populate(project, classified)
+
+    if not project.layers and not project.drills:
+        raise GerberError("None of the given files produced usable geometry.")
+
+    names = {layer.layer_type for layer in project.layers}
+    for layer_type, label in (
+        (LayerType.EDGE_CUTS, "board outline"),
+        (LayerType.TOP_COPPER, "front copper"),
+    ):
+        if layer_type not in names:
+            project.warnings.append(f"No {label} among the loaded files.")
     return project

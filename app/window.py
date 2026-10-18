@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 
 from exporter import ExportPackage, verify_plan, write_package
 from gcode_reader import read_file as read_gcode_file
-from gerber_io import LayerType, PcbProject, load_project
+from gerber_io import LayerType, PcbProject, load_files, load_project
 from pcb_engine import SlicerConfig, SlicerError, ToolSpec, plan_toolpaths
 from tool_db import (
     DbTool,
@@ -105,6 +105,7 @@ class MainWindow(QMainWindow):
         self.profile = MachineProfile()
         self.project: PcbProject | None = None
         self.archive: Path | None = None
+        self.file_paths: list[Path] = []
         self.plan = None
         self.verification = None
         self.package: ExportPackage | None = None
@@ -157,21 +158,29 @@ class MainWindow(QMainWindow):
         self._sync_viewer_toggles()
         self._refresh_widgets()
 
-        startup = self._startup_archive()
+        startup = self._startup_source()
         if startup is not None:
-            QTimer.singleShot(60, lambda: self._load(startup))
+            kind, value = startup
+            if kind == "archive":
+                QTimer.singleShot(60, lambda: self._load(value))
+            else:
+                QTimer.singleShot(60, lambda: self._load_files(value))
 
         QTimer.singleShot(1400, self._check_for_updates)
         QTimer.singleShot(300, self._register_in_start_menu)
 
-    def _startup_archive(self) -> Path | None:
+    def _startup_source(self):
         remembered = self.preferences.restore_archive()
         if remembered:
             candidate = Path(remembered)
             if candidate.exists():
-                return candidate
+                return ("archive", candidate)
+        files = [Path(p) for p in self.preferences.restore_files()]
+        files = [p for p in files if p.exists()]
+        if files:
+            return ("files", files)
         if DEFAULT_ARCHIVE.exists():
-            return DEFAULT_ARCHIVE
+            return ("archive", DEFAULT_ARCHIVE)
         return None
 
 
@@ -258,6 +267,7 @@ class MainWindow(QMainWindow):
         self.title_label.setVisible(width >= 620)
         self.subtitle.setVisible(width >= 1120)
         self.reload_button.setVisible(width >= 980)
+        self.add_files_button.setVisible(width >= 1080)
         self.quality_button.setVisible(width >= 900)
         self.view_button.setVisible(width >= 1120)
         self.view_button.setText("View G-code…" if width >= 1260 else "G-code…")
@@ -339,6 +349,13 @@ class MainWindow(QMainWindow):
         self.open_button.setToolTip("Open a Gerber .zip archive")
         self.open_button.clicked.connect(self._choose_archive)
         layout.addWidget(self.open_button)
+
+        self.add_files_button = QPushButton("Add Files…")
+        self.add_files_button.setToolTip(
+            "Pick Gerber and drill files one by one instead of a .zip"
+        )
+        self.add_files_button.clicked.connect(self._choose_files)
+        layout.addWidget(self.add_files_button)
 
         self.reload_button = QPushButton("Reload")
         self.reload_button.clicked.connect(self._reload)
@@ -452,6 +469,7 @@ class MainWindow(QMainWindow):
         self._build_help_card(layout)
         self._build_job_card(layout)
         self._build_tool_card(layout)
+        self._build_mcp_card(layout)
         self._build_isolation_card(layout)
         self._build_rubout_card(layout)
         self._build_cutout_card(layout)
@@ -762,6 +780,64 @@ class MainWindow(QMainWindow):
             lambda v: setattr(self.config.silkscreen_tool, "diameter", v),
             2, " mm",
         )
+
+    def _build_mcp_card(self, layout: QVBoxLayout) -> None:
+        card = Card("AI / MCP", theme.MAUVE)
+        layout.addWidget(card)
+
+        note = card.add_label("", "Hint")
+        note.setWordWrap(True)
+        note.setText(
+            "This app is also an MCP server. Point Claude Code at it and the "
+            "assistant can load boards, pick tools, plan, export, read and "
+            "write files, and change the app itself."
+        )
+
+        self.mcp_status = card.add_label("", "Hint")
+        self.mcp_status.setWordWrap(True)
+        self.mcp_status.setStyleSheet(f"color: {theme.OVERLAY};")
+
+        prompt_button = QPushButton("Copy Claude Code prompt")
+        prompt_button.clicked.connect(self._copy_mcp_prompt)
+        card.add(prompt_button)
+
+        config_button = QPushButton("Copy .mcp.json")
+        config_button.clicked.connect(self._copy_mcp_config)
+        card.add(config_button)
+
+        self._refresh_mcp_status()
+
+    def _refresh_mcp_status(self) -> None:
+        label = getattr(self, "mcp_status", None)
+        if label is None:
+            return
+        try:
+            from mcp_server import claude_config
+
+            server = claude_config()["mcpServers"]["wegstr"]
+            label.setText(f"{server['command']} {' '.join(server['args'])}")
+        except Exception as exc:
+            label.setText(f"MCP server unavailable: {exc}")
+
+    def _copy_mcp_prompt(self) -> None:
+        try:
+            from mcp_server import setup_prompt
+
+            QGuiApplication.clipboard().setText(setup_prompt())
+            self.status_label.setText("Copied the Claude Code setup prompt.")
+        except Exception as exc:
+            self.status_label.setText(f"Could not build the prompt: {exc}")
+
+    def _copy_mcp_config(self) -> None:
+        try:
+            import json
+
+            from mcp_server import claude_config
+
+            QGuiApplication.clipboard().setText(json.dumps(claude_config(), indent=2))
+            self.status_label.setText("Copied the .mcp.json snippet.")
+        except Exception as exc:
+            self.status_label.setText(f"Could not build the config: {exc}")
 
     def _load_tool_db(self) -> None:
         try:
@@ -1389,9 +1465,41 @@ class MainWindow(QMainWindow):
         if path:
             self._load(Path(path))
 
+    def _choose_files(self) -> None:
+        if self.file_paths:
+            start = str(self.file_paths[0].parent)
+        elif self.archive:
+            start = str(self.archive.parent)
+        else:
+            start = str(Path.home())
+        chosen, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Add Gerber and drill files",
+            start,
+            "PCB files (*.gbr *.ger *.art *.gtl *.gbl *.gko *.gm1 *.gml *.gto "
+            "*.gbo *.gts *.gbs *.gtp *.gbp *.drl *.xln *.nc);;All files (*)",
+        )
+        if not chosen:
+            return
+        incoming = [Path(p) for p in chosen]
+        merged: list[Path] = []
+        if self.file_paths:
+            key = lambda p: str(p.resolve()).lower()
+            existing = {key(p) for p in self.file_paths}
+            merged = list(self.file_paths)
+            for path in incoming:
+                if key(path) not in existing:
+                    merged.append(path)
+                    existing.add(key(path))
+        else:
+            merged = incoming
+        self._load_files(merged)
+
     def _reload(self) -> None:
         if self.archive:
             self._load(self.archive)
+        elif self.file_paths:
+            self._load_files(self.file_paths)
 
     def _load(self, path: Path) -> None:
         self.status_label.setText(f"Parsing {path.name}…")
@@ -1405,22 +1513,52 @@ class MainWindow(QMainWindow):
             return
 
         self.archive = path
+        self.file_paths = []
+        self._finish_load(path.name, str(path), [])
+
+    def _load_files(self, paths: list[Path]) -> None:
+        if not paths:
+            return
+        label = ", ".join(p.name for p in paths[:3])
+        if len(paths) > 3:
+            label += f" + {len(paths) - 3} more"
+        self.status_label.setText(f"Reading {len(paths)} file(s)…")
+        try:
+            if self.project is not None:
+                self.project.cleanup()
+            self.project = load_files(paths)
+        except Exception as exc:
+            self.project = None
+            self.status_label.setText(f"Error: {exc}")
+            return
+
+        self.archive = None
+        self.file_paths = list(paths)
+        self._finish_load(label, "|".join(str(p) for p in paths), [str(p) for p in paths])
+
+    def _finish_load(self, label: str, key: str, files: list[str]) -> None:
         self.viewer.clear()
 
         has_back = self.project.layer(LayerType.BOTTOM_COPPER) is not None
-        if has_back and self._sides_defaulted_for != str(path):
+        if has_back and self._sides_defaulted_for != key:
             self.config.mill_bottom = True
-        self._sides_defaulted_for = str(path)
+        self._sides_defaulted_for = key
         self._tools_auto_applied = False
         self._auto_select_tools()
         self._refresh_widgets()
-        self.preferences.save_archive(str(path))
+
+        if self.archive is not None:
+            self.preferences.save_archive(str(self.archive))
+            self.preferences.save_files([])
+        else:
+            self.preferences.save_archive("")
+            self.preferences.save_files(files)
         self._schedule_autosave()
 
         self._populate_report(self.project)
         note = getattr(self, "_tool_note", "")
         self.status_label.setText(
-            f"Loaded {path.name} — {note}" if note else f"Loaded {path.name} — computing…"
+            f"Loaded {label} — {note}" if note else f"Loaded {label} — computing…"
         )
         self._request_plan()
 

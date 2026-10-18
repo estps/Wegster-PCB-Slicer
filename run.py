@@ -60,7 +60,7 @@ def self_test(argv: list[str]) -> int:
         note(f"tool db: unavailable ({type(exc).__name__}: {exc})")
 
     try:
-        from sqlite_read import SqliteReader  # noqa: F401
+        from sqlite_read import SqliteReader
 
         note("sqlite reader: present")
     except Exception as exc:
@@ -89,6 +89,19 @@ def self_test(argv: list[str]) -> int:
                 archive = DEFAULT_ARCHIVE
         except Exception:
             archive = None
+
+    if archive is None:
+        try:
+            import tempfile
+
+            from sample_gerber import write_sample_gerber
+
+            archive = write_sample_gerber(
+                Path(tempfile.mkdtemp(prefix="wegstr_st_")) / "gerber"
+            )
+            note("pipeline: no archive supplied, using a generated sample board")
+        except Exception as exc:
+            note(f"pipeline: could not build a sample board ({exc})")
 
     if archive is None:
         note("pipeline: skipped (no Gerber archive given)")
@@ -130,6 +143,17 @@ def self_test(argv: list[str]) -> int:
 
 
 def main() -> int:
+    if "--mcp" in sys.argv:
+        try:
+            from app import BACKEND_DIR
+
+            del BACKEND_DIR
+        except Exception:
+            pass
+        from mcp_server import main as run_mcp
+
+        return run_mcp([a for a in sys.argv[1:] if a != "--mcp"])
+
     if "--reset-preferences" in sys.argv:
         from app.settings import Preferences, settings_path
 

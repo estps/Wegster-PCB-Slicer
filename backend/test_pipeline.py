@@ -97,8 +97,14 @@ def test_engine(archive: Path) -> None:
         config.mill_bottom = True
         plan = plan_toolpaths(project, config)
 
-        check(50 < plan.board.width < 60, f"board width sane ({plan.board.width:.2f} mm)")
-        check(80 < plan.board.height < 90, f"board height sane ({plan.board.height:.2f} mm)")
+        check(
+            0 < plan.board.width <= config.machine_x,
+            f"board width fits the bed ({plan.board.width:.2f} mm)",
+        )
+        check(
+            0 < plan.board.height <= config.machine_y,
+            f"board height fits the bed ({plan.board.height:.2f} mm)",
+        )
 
         kinds = [g.kind for g in plan.groups]
         check("isolation" in kinds, "isolation group produced")
@@ -905,13 +911,156 @@ def test_start_menu_shortcut() -> None:
         )
 
 
-def main() -> int:
-    archive = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_ARCHIVE
-    if not archive.exists():
-        print(f"error: archive not found: {archive}", file=sys.stderr)
-        return 2
+def test_file_by_file() -> None:
+    print("\n== Loading individual Gerber / drill files ==")
+    import tempfile
 
-    print(f"Testing against {archive.name}")
+    from gerber_io import load_files
+    from sample_gerber import write_sample_gerber
+
+    with tempfile.TemporaryDirectory(prefix="wegstr_files_") as tmp:
+        directory = Path(tmp) / "gerber"
+        write_sample_gerber(directory)
+        names = sorted(p.name for p in directory.iterdir() if p.suffix.lower() != ".zip")
+        check(len(names) >= 6, f"sample board has {len(names)} separate files")
+
+        paths = [directory / name for name in names]
+        project = load_files(paths)
+        try:
+            roles = {layer.layer_type for layer in project.layers}
+            check(LayerType.EDGE_CUTS in roles, "outline recognised from a loose file")
+            check(LayerType.TOP_COPPER in roles, "front copper recognised from a loose file")
+            check(LayerType.BOTTOM_COPPER in roles, "back copper recognised from a loose file")
+            check(LayerType.TOP_MASK in roles, "solder mask recognised from a loose file")
+            check(len(project.drills) == 2, f"two drill programs from loose files ({len(project.drills)})")
+            check(
+                sum(len(d.holes) for d in project.drills) > 0,
+                "loose drill files yielded holes",
+            )
+        finally:
+            project.cleanup()
+
+        partial = load_files(paths[:2])
+        try:
+            check(
+                len(partial.layers) + len(partial.drills) >= 1,
+                "a partial set still loads something",
+            )
+            check(
+                any("No board outline" in w or "No front copper" in w for w in partial.warnings),
+                "a partial set warns about what is missing",
+            )
+        finally:
+            partial.cleanup()
+
+        duplicate = load_files(paths + paths)
+        try:
+            names_loaded = [layer.name for layer in duplicate.layers]
+            check(
+                len(names_loaded) == len(set(names_loaded)),
+                f"duplicate paths are de-duplicated ({len(names_loaded)} files)",
+            )
+        finally:
+            duplicate.cleanup()
+
+        try:
+            load_files([directory / "nope.GTL"])
+            check(False, "a missing file raises FileNotFoundError")
+        except FileNotFoundError:
+            check(True, "a missing file raises FileNotFoundError")
+
+        override = load_files(
+            [directory / "Sample_TopLayer.GTL"], roles={"Sample_TopLayer.GTL": "edge_cuts"}
+        )
+        try:
+            check(
+                override.layer(LayerType.EDGE_CUTS) is not None,
+                "an explicit role override is honoured",
+            )
+        finally:
+            override.cleanup()
+
+
+def test_mcp_bridge() -> None:
+    print("\n== MCP server ==")
+    import json
+    import tempfile
+
+    from sample_gerber import write_sample_gerber
+
+    with tempfile.TemporaryDirectory(prefix="wegstr_mcp_") as tmp:
+        root = Path(tmp)
+        archive = write_sample_gerber(root / "gerber")
+        out_dir = root / "out"
+
+        requests = [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}},
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "open_archive", "arguments": {"path": str(archive)}}},
+            {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "plan", "arguments": {}}},
+            {"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "export", "arguments": {"out_dir": str(out_dir)}}},
+            {"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "python", "arguments": {"code": "print('ok'); state.describe()"}}},
+            {"jsonrpc": "2.0", "id": 7, "method": "resources/read", "params": {"uri": "wegstr://skill"}},
+            {"jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": {"name": "add_files", "arguments": {"paths": [str(root / "gerber" / "Sample_TopLayer.GTL"), str(root / "gerber" / "Sample_BoardOutlineLayer.GKO")], "roles": {}}}},
+        ]
+        payload = "\n".join(json.dumps(r) for r in requests) + "\n"
+        proc = subprocess.run(
+            [sys.executable, str(HERE / "mcp_server.py")],
+            input=payload,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=600,
+        )
+        check(proc.returncode == 0, "MCP server exited cleanly")
+        replies = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
+        check(len(replies) == len(requests) - 1, f"one reply per request ({len(replies)})")
+        by_id = {r["id"]: r for r in replies if "id" in r}
+
+        init = by_id[1]["result"]
+        check(init["serverInfo"]["name"] == "wegstr-pcb-slicer", "server identifies itself")
+        check(init["protocolVersion"] == "2025-06-18", "protocol version echoed")
+
+        tools = {t["name"] for t in by_id[2]["result"]["tools"]}
+        for expected in ("open_archive", "add_files", "plan", "export", "python", "list_tools"):
+            check(expected in tools, f"tool {expected!r} exposed")
+        check(len(tools) >= 15, f"{len(tools)} tools exposed")
+
+        def payload_of(request_id):
+            return json.loads(by_id[request_id]["result"]["content"][0]["text"])
+
+        project = payload_of(3)
+        check(len(project["layers"]) >= 4, "open_archive returns layers over MCP")
+        plan = payload_of(4)
+        check(len(plan["groups"]) >= 2, "plan returns operations over MCP")
+        export = payload_of(5)
+        check(bool(export["files"]), f"export wrote {len(export['files'])} file(s)")
+        check(out_dir.exists(), "export directory exists")
+
+        python = payload_of(6)
+        check(python["stdout"].strip() == "ok", "python tool runs code")
+        check(isinstance(python.get("result"), str) and "layers" in python["result"], "python tool returns the live state")
+
+        skill = by_id[7]["result"]["contents"][0]["text"]
+        check("Wegstr" in skill and len(skill) > 300, "skill resource is served")
+        check(payload_of(8)["layers"], "add_files accepts a role map")
+
+
+def main() -> int:
+    import tempfile
+
+    requested = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_ARCHIVE
+    temp_root: str | None = None
+    if requested.exists():
+        archive = requested
+        print(f"Testing against {archive.name}")
+    else:
+        from sample_gerber import write_sample_gerber
+
+        temp_root = tempfile.mkdtemp(prefix="wegstr_sample_")
+        archive = write_sample_gerber(Path(temp_root) / "gerber")
+        print(f"Testing against the generated sample board ({archive.name})")
     test_gerber_parsing(archive)
     test_engine(archive)
     test_gcode(archive)
@@ -923,6 +1072,8 @@ def main() -> int:
     test_sqlite_reader()
     test_tool_db()
     test_start_menu_shortcut()
+    test_file_by_file()
+    test_mcp_bridge()
     test_clearance_and_feeds(archive)
     test_updater_versions()
 

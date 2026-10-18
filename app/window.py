@@ -997,10 +997,22 @@ class MainWindow(QMainWindow):
             3, " mm",
         )
         self._bind_slider(
-            card, "Passes", 1, 12,
+            card, "Depth passes", 1, 12,
             lambda: self.config.isolation_passes,
             lambda v: setattr(self.config, "isolation_passes", int(v)),
             0,
+        ).setToolTip(
+            "How many depth steps reach the target depth. Target 0.075 mm with\n"
+            "3 passes cuts 0.025, 0.05 and 0.075 mm."
+        )
+        self._bind_slider(
+            card, "Offset passes", 1, 8,
+            lambda: self.config.isolation_offsets,
+            lambda v: setattr(self.config, "isolation_offsets", int(v)),
+            0,
+        ).setToolTip(
+            "Extra parallel passes widening the isolation channel. One pass cuts\n"
+            "a single line along the copper edge."
         )
         self._bind_slider(
             card, "Stepover", 0.0, 1.0,
@@ -1874,6 +1886,7 @@ class MainWindow(QMainWindow):
     def _apply_quality_preset(self) -> None:
         self._apply_isolation_preset()
         self.config.isolation_passes = 3
+        self.config.isolation_offsets = 3
         self.config.rubout_enabled = True
         self._refresh_widgets()
         self._request_plan()

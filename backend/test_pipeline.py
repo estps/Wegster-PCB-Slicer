@@ -1564,6 +1564,58 @@ def test_isolation_preset() -> None:
     )
 
 
+def test_depth_passes(archive: Path) -> None:
+    print("\n== Isolation depth passes ==")
+    from wegstr_gcode import emit_plan
+
+    project = load_project(archive)
+    try:
+        config = SlicerConfig()
+        config.mill_bottom = False
+        config.alignment_holes = False
+        config.isolation_depth = 0.075
+        config.isolation_passes = 3
+        config.isolation_offsets = 1
+
+        plan = plan_toolpaths(project, config)
+        isolation = next(g for g in plan.groups if g.kind == "isolation")
+        depths = [round(abs(d), 4) for d in isolation.depth.passes()]
+        check(depths == [0.025, 0.05, 0.075], f"three depth passes: {depths}")
+
+        program = emit_plan(plan, config, program_name="depth-passes")
+        check(
+            program.count("(Depth ") >= 3,
+            f"the program emits {program.count('(Depth ')} depth levels",
+        )
+        check(
+            "Z-0.075" in program,
+            "the last pass reaches the 0.075 mm target",
+        )
+
+        single = len(isolation.polylines)
+        config.isolation_offsets = 2
+        plan = plan_toolpaths(project, config)
+        wide = next(g for g in plan.groups if g.kind == "isolation")
+        check(
+            len(wide.polylines) > single,
+            f"offset passes add paths ({single} -> {len(wide.polylines)})",
+        )
+        check(
+            wide.depth.passes() == isolation.depth.passes(),
+            "offset passes do not change the depth steps",
+        )
+
+        config.isolation_passes = 1
+        plan = plan_toolpaths(project, config)
+        one = next(g for g in plan.groups if g.kind == "isolation")
+        check(
+            len(one.depth.passes()) == 1,
+            "one depth pass cuts straight to the target",
+        )
+    finally:
+        project.cleanup()
+
+
 def main() -> int:
     import tempfile
 
@@ -1598,6 +1650,7 @@ def main() -> int:
     test_custom_origin(archive)
     test_double_sided_layout()
     test_isolation_preset()
+    test_depth_passes(archive)
     test_clearance_and_feeds(archive)
     test_updater_versions()
 

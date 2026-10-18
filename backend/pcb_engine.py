@@ -140,6 +140,7 @@ class SlicerConfig:
     isolation_enabled: bool = True
     isolation_depth: float = 0.05
     isolation_passes: int = 1
+    isolation_offsets: int = 1
     isolation_stepover: float = 0.0
     isolation_clearance: float = 0.0
 
@@ -204,6 +205,8 @@ class SlicerConfig:
             problems.append(f"Unknown origin mode {self.origin_mode!r}.")
         if self.isolation_enabled and self.isolation_passes < 1:
             problems.append("Isolation passes must be at least 1.")
+        if self.isolation_enabled and self.isolation_offsets < 1:
+            problems.append("Isolation offsets must be at least 1.")
         if self.isolation_enabled and self.isolation_depth <= 0:
             problems.append("Isolation depth must be greater than zero.")
         if self.cutout_enabled and self.cutout_depth <= 0:
@@ -695,6 +698,7 @@ def _rotate_point(x: float, y: float, angle: int) -> tuple[float, float]:
 def apply_isolation_preset(config: SlicerConfig, has_bottom: bool) -> SlicerConfig:
     config.isolation_enabled = True
     config.isolation_passes = 1
+    config.isolation_offsets = 1
     config.isolation_depth = 0.05
     config.isolation_stepover = 0.0
     config.isolation_clearance = 0.0
@@ -896,7 +900,7 @@ def generate_isolation(
     polylines: list[Polyline] = []
     seen: set[tuple[int, int]] = set()
 
-    for index in range(config.isolation_passes):
+    for index in range(max(1, int(config.isolation_offsets))):
         offset = radius + config.isolation_clearance + index * stepover
         buffered = _buffer(copper, offset, config.quad_segs)
         if buffered is None:
@@ -1336,7 +1340,10 @@ def plan_toolpaths(project: PcbProject, config: SlicerConfig) -> ToolpathPlan:
                         name=f"Isolation ({side})",
                         kind="isolation",
                         tool=config.isolation_tool,
-                        depth=DepthStrategy(config.isolation_depth, config.isolation_depth),
+                        depth=DepthStrategy(
+                            config.isolation_depth,
+                            config.isolation_depth / max(1, config.isolation_passes),
+                        ),
                         polylines=paths,
                         side=side,
                         requires_flip_before=flip_pending,

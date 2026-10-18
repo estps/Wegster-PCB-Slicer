@@ -37,7 +37,7 @@ class MachineProfile:
     work_y: float = 200.0
     work_z: float = 40.0
 
-    rapid_z: float = 2.0
+    rapid_z: float = 0.6
     safe_z: float = 8.0
     tool_change_z: float = 20.0
 
@@ -190,7 +190,10 @@ class GCodeBuilder:
 
 
     def rapid(self, x: float | None = None, y: float | None = None, z: float | None = None) -> None:
-        self._move("G0", x, y, z)
+        feed = None
+        if (x is not None or y is not None) and self.profile.travel_feed > 0:
+            feed = self.profile.travel_feed
+        self._move("G0", x, y, z, feed)
 
     def feed_move(
         self,

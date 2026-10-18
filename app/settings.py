@@ -21,6 +21,10 @@ _KEY_MAXIMISED = "window/maximised"
 _KEY_CONFIG = "job/config"
 _KEY_PROFILE = "job/profile"
 _KEY_VIEWER = "viewer"
+_KEY_THEME = "view/theme"
+_KEY_DENSITY = "view/density"
+_KEY_PRESETS = "job/presets"
+_KEY_TOOL_PRESETS = "tool/user_presets"
 _KEY_PANEL_HIDDEN = "view/panel_hidden"
 _KEY_ARCHIVE = "job/last_archive"
 _KEY_FILES = "job/last_files"
@@ -104,11 +108,69 @@ class Preferences:
                 _apply(profile, json.loads(raw))
             if abs(profile.work_x - 140.0) < 1e-6 and abs(profile.work_y - 90.0) < 1e-6:
                 profile.work_y = 200.0
+            if abs(profile.rapid_z - 2.0) < 1e-9:
+                profile.rapid_z = 0.6
             if abs(config.alignment_hole_diameter - 3.0) < 1e-9:
                 config.alignment_hole_diameter = 2.0
         except Exception:
             pass
 
+
+    def save_theme(self, mode: str) -> None:
+        try:
+            self.settings.setValue(_KEY_THEME, str(mode))
+            self.settings.sync()
+        except Exception:
+            pass
+
+    def restore_theme(self) -> str:
+        try:
+            value = self.settings.value(_KEY_THEME, "dark")
+            return "light" if str(value).lower() == "light" else "dark"
+        except Exception:
+            return "dark"
+
+    def save_density(self, value: str) -> None:
+        try:
+            self.settings.setValue(_KEY_DENSITY, str(value))
+            self.settings.sync()
+        except Exception:
+            pass
+
+    def restore_density(self) -> str:
+        try:
+            value = self.settings.value(_KEY_DENSITY, "compact")
+            return "comfortable" if str(value).lower() == "comfortable" else "compact"
+        except Exception:
+            return "compact"
+
+    def save_presets(self, presets: dict) -> None:
+        try:
+            self.settings.setValue(_KEY_PRESETS, json.dumps(presets))
+            self.settings.sync()
+        except Exception:
+            pass
+
+    def restore_presets(self) -> dict:
+        try:
+            raw = self.settings.value(_KEY_PRESETS)
+            return json.loads(raw) if raw else {}
+        except Exception:
+            return {}
+
+    def save_tool_presets(self, presets: dict) -> None:
+        try:
+            self.settings.setValue(_KEY_TOOL_PRESETS, json.dumps(presets))
+            self.settings.sync()
+        except Exception:
+            pass
+
+    def restore_tool_presets(self) -> dict:
+        try:
+            raw = self.settings.value(_KEY_TOOL_PRESETS)
+            return json.loads(raw) if raw else {}
+        except Exception:
+            return {}
 
     def save_viewer(self, state: dict) -> None:
         try:

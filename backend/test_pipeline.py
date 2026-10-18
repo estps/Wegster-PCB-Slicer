@@ -263,9 +263,13 @@ def test_verification(archive: Path) -> None:
                 f"toolpath Y max {bounds[3]:.3f} inside the envelope",
             )
 
+        import re
+
         good = emit_plan(plan, config, WEGSTR_LIGHT, "faults")
         faults = {
-            "rapid move with the tool down": good.replace("G0 Z2\n", "G0 Z-1\n", 1),
+            "rapid move with the tool down": good.replace(
+                "G90", "G90\nG0 Z-1\nG0 X5 Y5", 1
+            ),
             "coordinate outside the work area": good.replace(
                 "G90", "G90\nG0 X999 Y0", 1
             ),

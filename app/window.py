@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QProgressBar,
@@ -46,6 +47,7 @@ from updater import UpdateInfo, check_for_update
 from wegstr_gcode import GCodeError, MachineProfile, estimate_runtime
 
 from . import theme
+from .presets import BUILTIN, apply_preset, capture, preset_names
 from .settings import Preferences
 from .shortcuts import install_shortcut
 from .viewer import ToolpathView
@@ -113,7 +115,6 @@ class MainWindow(QMainWindow):
         self.project: PcbProject | None = None
         self.archive: Path | None = None
         self.file_paths: list[Path] = []
-        self._pending_export = False
         self.plan = None
         self.verification = None
         self.package: ExportPackage | None = None
@@ -126,13 +127,18 @@ class MainWindow(QMainWindow):
 
         self.tool_db: ToolDatabase | None = None
         self.tool_combos: dict[str, QComboBox] = {}
+        self._tool_presets: dict[str, dict] = {}
         self._tools_auto_applied = False
         self._update_info: UpdateInfo | None = None
 
         self.preferences = Preferences()
-        self.preferences.restore_job(self.config, self.profile)
         self._panel_hidden = self.preferences.restore_panel_hidden()
+        self._theme_mode = theme.set_mode(self.preferences.restore_theme())
+        self._density = theme.set_density(self.preferences.restore_density())
+        theme.apply(QGuiApplication.instance())
+        self.preferences.restore_job(self.config, self.profile)
         self._load_tool_db()
+        self._tool_presets = self.preferences.restore_tool_presets()
 
         self._autosave = QTimer(self)
         self._autosave.setSingleShot(True)
@@ -276,12 +282,8 @@ class MainWindow(QMainWindow):
         self.subtitle.setVisible(width >= 1120)
         self.reload_button.setVisible(width >= 980)
         self.add_files_button.setVisible(width >= 1080)
-        self.quality_button.setVisible(width >= 900)
         self.view_button.setVisible(width >= 1120)
         self.view_button.setText("View G-code…" if width >= 1260 else "G-code…")
-        self.oneclick_button.setText(
-            "One-Click Isolation" if width >= 1180 else "One-Click"
-        )
         self.export_button.setText("Export Files…" if width >= 1020 else "Export")
 
         detailed = width >= 940
@@ -371,16 +373,7 @@ class MainWindow(QMainWindow):
 
         layout.addSpacing(6)
 
-        self.oneclick_button = QPushButton("One-Click Isolation")
-        self.oneclick_button.setObjectName("Primary")
-        self.oneclick_button.setToolTip("Conservative defaults, then compute and export")
-        self.oneclick_button.clicked.connect(self._one_click)
-        layout.addWidget(self.oneclick_button)
-
-        self.quality_button = QPushButton("High Quality")
-        self.quality_button.setToolTip("Three isolation passes plus rub-out copper clearing")
-        self.quality_button.clicked.connect(self._apply_quality_preset)
-        layout.addWidget(self.quality_button)
+        self.panel_button = QPushButton("Panel")
 
         layout.addStretch(1)
 
@@ -639,9 +632,77 @@ class MainWindow(QMainWindow):
             row_layout.addWidget(text, 1)
             card.add(row)
 
+    def _refresh_presets(self) -> None:
+        current = self.preset_combo.currentText()
+        self.preset_combo.clear()
+        self.preset_combo.addItems(preset_names(self._user_presets))
+        index = self.preset_combo.findText(current)
+        if index >= 0:
+            self.preset_combo.setCurrentIndex(index)
+
+    def _apply_preset(self) -> None:
+        name = self.preset_combo.currentText()
+        data = self._user_presets.get(name) or BUILTIN.get(name)
+        if not data:
+            return
+        applied = apply_preset(self.config, data)
+        self._tools_auto_applied = True
+        self._refresh_widgets()
+        self._schedule_autosave()
+        self.status_label.setText(f"Applied preset {name} ({len(applied)} settings)")
+        self._request_plan()
+
+    def _save_preset(self) -> None:
+        name, ok = QInputDialog.getText(
+            self, "Save preset", "Preset name:", text=self.preset_combo.currentText()
+        )
+        name = (name or "").strip()
+        if not ok or not name:
+            return
+        if name in BUILTIN:
+            self.status_label.setText(f"{name} is built in - pick another name")
+            return
+        self._user_presets[name] = capture(self.config)
+        self.preferences.save_presets(self._user_presets)
+        self._refresh_presets()
+        self.preset_combo.setCurrentText(name)
+        self.status_label.setText(f"Saved preset {name}")
+
+    def _delete_preset(self) -> None:
+        name = self.preset_combo.currentText()
+        if name in BUILTIN:
+            self.status_label.setText(f"{name} is built in and cannot be removed")
+            return
+        if name in self._user_presets:
+            del self._user_presets[name]
+            self.preferences.save_presets(self._user_presets)
+            self._refresh_presets()
+            self.status_label.setText(f"Deleted preset {name}")
+
     def _build_job_card(self, layout: QVBoxLayout) -> None:
         card = Card("Job Setup", theme.BLUE)
         layout.addWidget(card)
+
+        preset_row = QWidget()
+        preset_layout = QHBoxLayout(preset_row)
+        preset_layout.setContentsMargins(0, 0, 0, 0)
+        preset_layout.setSpacing(6)
+        self.preset_combo = QComboBox()
+        self._user_presets = self.preferences.restore_presets()
+        self._refresh_presets()
+        preset_layout.addWidget(self.preset_combo, 1)
+        apply_button = QPushButton("Apply")
+        apply_button.clicked.connect(self._apply_preset)
+        preset_layout.addWidget(apply_button)
+        save_button = QPushButton("Save")
+        save_button.setToolTip("Store the current settings as a preset")
+        save_button.clicked.connect(self._save_preset)
+        preset_layout.addWidget(save_button)
+        delete_button = QPushButton("Delete")
+        delete_button.setToolTip("Remove a saved preset")
+        delete_button.clicked.connect(self._delete_preset)
+        preset_layout.addWidget(delete_button)
+        card.add_row("Presets", preset_row)
 
         self.origin_combo = QComboBox()
         self.origin_combo.addItem("Lower-left corner", "lower_left")
@@ -774,6 +835,13 @@ class MainWindow(QMainWindow):
         )
         self.auto_tool_button.clicked.connect(lambda: self._auto_select_tools(force=True))
         card.add(self.auto_tool_button)
+
+        save_tool_button = QPushButton("Save current tool…")
+        save_tool_button.setToolTip(
+            "Store the isolation tool's geometry and feeds as a reusable tool"
+        )
+        save_tool_button.clicked.connect(self._save_tool_preset)
+        card.add(save_tool_button)
 
         card.add_section_label("Isolation geometry")
         self.tool_kind_combo = QComboBox()
@@ -914,6 +982,8 @@ class MainWindow(QMainWindow):
                 for group, tools in self.tool_db.groups().items():
                     for tool in tools:
                         combo.addItem(f"{tool.name}   ·   {group}", tool.key)
+            for name in self._tool_presets:
+                combo.addItem(f"{name}   ·   My tools", f"user:{name}")
             combo.blockSignals(False)
         self._update_tool_db_label()
 
@@ -931,18 +1001,58 @@ class MainWindow(QMainWindow):
 
     def _on_tool_combo_changed(self, role: str) -> None:
         combo = self.tool_combos.get(role)
-        if combo is None or self.tool_db is None:
+        if combo is None:
             return
         key = combo.currentData()
         if not key:
             return
-        tool = self.tool_db.by_key(str(key))
+        key = str(key)
+        if key.startswith("user:"):
+            data = self._tool_presets.get(key[5:])
+            if not data:
+                return
+            apply_role(self.config, role, data)
+            self._tools_auto_applied = True
+            self._refresh_widgets()
+            self._debounce.start()
+            self._schedule_autosave()
+            return
+        if self.tool_db is None:
+            return
+        tool = self.tool_db.by_key(key)
         if tool is None:
             return
         apply_role(self.config, role, tool)
         self._refresh_widgets()
         self._debounce.start()
         self._schedule_autosave()
+
+    def _save_tool_preset(self) -> None:
+        tool = self.config.isolation_tool
+        default = tool.name or "My tool"
+        name, ok = QInputDialog.getText(
+            self, "Save tool", "Tool name:", text=default
+        )
+        name = (name or "").strip()
+        if not ok or not name:
+            return
+        self._tool_presets[name] = {
+            "name": name,
+            "kind": tool.kind,
+            "diameter": tool.diameter,
+            "tip_diameter": tool.tip_diameter,
+            "angle": tool.angle,
+            "feed_rate": tool.feed_rate,
+            "plunge_rate": tool.plunge_rate,
+            "spindle_speed": tool.spindle_rpm,
+            "stepdown": tool.stepdown,
+            "stepover": tool.stepover,
+            "key": f"user:{name}",
+        }
+        self.preferences.save_tool_presets(self._tool_presets)
+        self._populate_tool_combos()
+        self._sync_tool_combos()
+        self.status_label.setText(f"Saved tool {name}")
 
     def _auto_select_tools(self, force: bool = False) -> None:
         if self.tool_db is None:
@@ -1293,6 +1403,25 @@ class MainWindow(QMainWindow):
             1, " mm/min",
         )
         self._bind_slider(
+            card, "Travel feed", 200.0, 6000.0,
+            lambda: self.profile.travel_feed,
+            lambda v: setattr(self.profile, "travel_feed", v),
+            0, " mm/min",
+        ).setToolTip(
+            "Speed for moves with the tool clear of the work. The G-code also\n"
+            "sets this as the modal feed before each rapid, so controllers that\n"
+            "reuse the last feed do not crawl between cuts."
+        )
+        self._bind_slider(
+            card, "Z-hop", 0.2, 5.0,
+            lambda: self.profile.rapid_z,
+            lambda v: setattr(self.profile, "rapid_z", v),
+            2, " mm",
+        ).setToolTip(
+            "How far the tool lifts between paths and pecks. 0.6 mm is enough to\n"
+            "clear the work and saves a lot of Z travel."
+        )
+        self._bind_slider(
             card, "Spindle", 10000, 15000,
             lambda: self.profile.spindle_rpm,
             lambda v: setattr(self.profile, "spindle_rpm", int(v)),
@@ -1324,6 +1453,30 @@ class MainWindow(QMainWindow):
             f"× {self.profile.work_z:.0f} mm"
         )
 
+    def _on_density_toggled(self, comfortable: bool) -> None:
+        self._density = theme.set_density("comfortable" if comfortable else "compact")
+        theme.apply(QGuiApplication.instance())
+        self._refresh_inline_theme()
+        self.preferences.save_density(self._density)
+        self.status_label.setText(
+            "Comfortable layout" if comfortable else "Compact layout"
+        )
+
+    def _on_theme_toggled(self, light: bool) -> None:
+        mode = theme.set_mode("light" if light else "dark")
+        self._theme_mode = mode
+        theme.apply(QGuiApplication.instance())
+        self._refresh_inline_theme()
+        self.viewer.refresh()
+        self.preferences.save_theme(mode)
+        self.status_label.setText(f"{mode.title()} theme")
+
+    def _refresh_inline_theme(self) -> None:
+        self.sides_hint.setStyleSheet(f"color: {theme.YELLOW};")
+        self.mcp_status.setStyleSheet(f"color: {theme.OVERLAY};")
+        self.verify_issues.setStyleSheet(f"color: {theme.YELLOW};")
+        self._update_tool_db_label()
+
     def _build_view_card(self, layout: QVBoxLayout) -> None:
         card = Card("Preview Layers", theme.TEAL)
         layout.addWidget(card)
@@ -1332,7 +1485,21 @@ class MainWindow(QMainWindow):
             card, "Copper traces", True, self.viewer.set_copper_visible, "copper"
         )
         self._plain_toggle(
-            card, "Fill copper", False, self.viewer.set_copper_fill, "copper_fill"
+            card, "Fill copper", True, self.viewer.set_copper_fill, "copper_fill"
+        )
+        self._plain_toggle(
+            card,
+            "Comfortable layout",
+            self._density == "comfortable",
+            self._on_density_toggled,
+            "density",
+        )
+        self._plain_toggle(
+            card,
+            "Light mode",
+            self._theme_mode == "light",
+            self._on_theme_toggled,
+            "light_mode",
         )
         for kind, label in (
             ("isolation", "Isolation"),
@@ -1810,10 +1977,6 @@ class MainWindow(QMainWindow):
             self.rotation_stat.set_value(f"{plan.board.rotation}°")
         self._update_origin_marker()
 
-        if getattr(self, "_pending_export", False):
-            self._pending_export = False
-            self._export()
-
         if not self._gcode_mode:
             self.viewer.set_plan(
                 plan, (self.profile.work_x, self.profile.work_y)
@@ -1885,18 +2048,6 @@ class MainWindow(QMainWindow):
         apply_isolation_preset(self.config, has_bottom)
         self._refresh_widgets()
         self._request_plan()
-
-    def _apply_quality_preset(self) -> None:
-        self._apply_isolation_preset()
-        self.config.isolation_passes = 3
-        self.config.isolation_offsets = 3
-        self.config.rubout_enabled = True
-        self._refresh_widgets()
-        self._request_plan()
-
-    def _one_click(self) -> None:
-        self._pending_export = True
-        self._apply_isolation_preset()
 
 
     def _export(self) -> None:

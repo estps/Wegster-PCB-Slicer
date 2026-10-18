@@ -16,56 +16,11 @@ ICON_SIZES = (16, 24, 32, 48, 64, 128, 256)
 
 
 def draw_icon(size: int):
-    from PySide6.QtCore import QPointF, QRectF, Qt
-    from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+    from app.branding import draw_logo
 
-    image = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
-    image.fill(Qt.GlobalColor.transparent)
-
-    scale = size / 256.0
-
-    def px(value: float) -> float:
-        return value * scale
-
-    painter = QPainter(image)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor("#12121A"))
-    painter.drawRoundedRect(QRectF(px(6), px(6), px(244), px(244)), px(46), px(46))
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    painter.setPen(QPen(QColor("#2E2E3E"), px(7)))
-    painter.drawRoundedRect(QRectF(px(6), px(6), px(244), px(244)), px(46), px(46))
-
-    painter.setPen(QPen(QColor("#F38BA8"), px(11)))
-    painter.drawRoundedRect(QRectF(px(42), px(38), px(172), px(180)), px(18), px(18))
-
-    cap = Qt.PenCapStyle.RoundCap
-    join = Qt.PenJoinStyle.RoundJoin
-
-    trace_a = QPainterPath()
-    trace_a.moveTo(px(80), px(74))
-    trace_a.lineTo(px(80), px(142))
-    trace_a.lineTo(px(142), px(142))
-    trace_a.lineTo(px(142), px(192))
-    painter.setPen(QPen(QColor("#A6E3A1"), px(10), Qt.PenStyle.SolidLine, cap, join))
-    painter.drawPath(trace_a)
-
-    trace_b = QPainterPath()
-    trace_b.moveTo(px(176), px(74))
-    trace_b.lineTo(px(176), px(116))
-    trace_b.lineTo(px(112), px(116))
-    trace_b.lineTo(px(112), px(192))
-    painter.setPen(QPen(QColor("#89B4FA"), px(10), Qt.PenStyle.SolidLine, cap, join))
-    painter.drawPath(trace_b)
-
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor("#FAB387"))
-    for x, y in ((80, 74), (142, 192), (176, 74), (112, 192)):
-        painter.drawEllipse(QPointF(px(x), px(y)), px(15), px(15))
-
-    painter.end()
-    return image
+    return draw_logo(size)
 
 
 def _png_bytes(image) -> bytes:

@@ -35,7 +35,7 @@ from wegstr_gcode import (
     estimate_runtime,
 )
 
-VERSION = "1.1.16"
+VERSION = "1.2.0"
 
 DEFAULT_ARCHIVE = Path(
     r"C:\Users\charles\Downloads\Gerber_Turretv2_PCB_Turretv2_2026-09-15.zip"

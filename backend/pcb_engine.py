@@ -481,34 +481,47 @@ def _slice_ring(points: np.ndarray, cumulative: np.ndarray, start: float, end: f
     return np.asarray(collected, dtype=float)
 
 
+def _orient_entry(polyline: Polyline, x: float, y: float) -> Polyline:
+    points = polyline.points
+    if len(points) < 2:
+        return polyline
+    if polyline.closed:
+        core = points[:-1] if np.allclose(points[0], points[-1]) else points
+        deltas = core - np.array([x, y])
+        index = int(np.argmin(np.hypot(deltas[:, 0], deltas[:, 1])))
+        if index == 0:
+            return polyline
+        rolled = np.vstack([core[index:], core[:index], core[index : index + 1]])
+        return Polyline(rolled, True, polyline.kind)
+
+    first = points[0]
+    last = points[-1]
+    if np.hypot(last[0] - x, last[1] - y) < np.hypot(first[0] - x, first[1] - y):
+        return polyline.reversed_copy()
+    return polyline
+
+
 def _optimise_order(
     polylines: Sequence[Polyline], start: tuple[float, float]
 ) -> list[Polyline]:
     remaining = list(polylines)
+    if len(remaining) < 2:
+        return remaining
+
+    centres = np.array(
+        [polyline.points[:, :2].mean(axis=0) for polyline in remaining]
+    )
+    alive = np.ones(len(remaining), dtype=bool)
     ordered: list[Polyline] = []
     cursor = np.asarray(start, dtype=float)
 
-    while remaining:
-        best_index = 0
-        best_distance = float("inf")
-        best_flip = False
-        for index, polyline in enumerate(remaining):
-            head = polyline.points[0]
-            tail = polyline.points[-1]
-            forward = float(np.hypot(*(head - cursor)))
-            if forward < best_distance:
-                best_distance = forward
-                best_index = index
-                best_flip = False
-            if not polyline.closed:
-                backward = float(np.hypot(*(tail - cursor)))
-                if backward < best_distance:
-                    best_distance = backward
-                    best_index = index
-                    best_flip = True
-        chosen = remaining.pop(best_index)
-        if best_flip:
-            chosen = chosen.reversed_copy()
+    while len(ordered) < len(remaining):
+        deltas = centres - cursor
+        distances = np.hypot(deltas[:, 0], deltas[:, 1])
+        distances[~alive] = np.inf
+        index = int(np.argmin(distances))
+        alive[index] = False
+        chosen = _orient_entry(remaining[index], float(cursor[0]), float(cursor[1]))
         ordered.append(chosen)
         cursor = chosen.points[-1]
 

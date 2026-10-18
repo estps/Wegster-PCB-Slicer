@@ -1,43 +1,92 @@
 
 from __future__ import annotations
 
+import re
+
 from PySide6.QtGui import QColor
 
-VOID = "#040406"
-CRUST = "#07070B"
-MANTLE = "#0A0A0F"
-BASE = "#0C0C12"
-SURFACE0 = "#12121A"
-SURFACE1 = "#1A1A24"
-SURFACE2 = "#242430"
-BORDER = "#1C1C26"
+_AMOLED = {
+    "VOID": "#000000",
+    "CRUST": "#000000",
+    "MANTLE": "#000000",
+    "BASE": "#000000",
+    "SURFACE0": "#0A0A0A",
+    "SURFACE1": "#141414",
+    "SURFACE2": "#1F1F1F",
+    "BORDER": "#191919",
+    "TEXT": "#F2F2F7",
+    "SUBTEXT": "#A2A2B4",
+    "OVERLAY": "#6E6E80",
+    "BLUE": "#8AB4F8",
+    "GREEN": "#A6E3A1",
+    "RED": "#F38BA8",
+    "YELLOW": "#F9E2AF",
+    "MAUVE": "#CBA6F7",
+    "PEACH": "#FAB387",
+    "TEAL": "#94E2D5",
+    "PINK": "#F5C2E7",
+    "COPPER_TOP": "#FAB387",
+    "COPPER_BOTTOM": "#8AB4F8",
+    "OUTLINE": "#F38BA8",
+    "ISOLATION": "#A6E3A1",
+    "RUBOUT": "#CBA6F7",
+    "CUTOUT": "#F38BA8",
+    "DRILL": "#94E2D5",
+    "SILKSCREEN": "#F5C2E7",
+    "RAPID": "#3A3A4A",
+    "PAUSE": "#F9E2AF",
+    "WARN_FILL": "rgba(249, 226, 175, 24)",
+    "WARN_LINE": "rgba(249, 226, 175, 64)",
+}
 
-TEXT = "#E8E8F4"
-SUBTEXT = "#9A9AB4"
-OVERLAY = "#5A5A72"
+_LIGHT = {
+    "VOID": "#FFFFFF",
+    "CRUST": "#FFFFFF",
+    "MANTLE": "#F1F1F6",
+    "BASE": "#F8F8FB",
+    "SURFACE0": "#FFFFFF",
+    "SURFACE1": "#EFEFF5",
+    "SURFACE2": "#DEDEE8",
+    "BORDER": "#D6D6E0",
+    "TEXT": "#16161E",
+    "SUBTEXT": "#4E4E62",
+    "OVERLAY": "#83839A",
+    "BLUE": "#1F6FEB",
+    "GREEN": "#2E8B4F",
+    "RED": "#C93B54",
+    "YELLOW": "#9A6E12",
+    "MAUVE": "#6B46C1",
+    "PEACH": "#B5651D",
+    "TEAL": "#177F76",
+    "PINK": "#B23A78",
+    "COPPER_TOP": "#C46A2A",
+    "COPPER_BOTTOM": "#3B6FD4",
+    "OUTLINE": "#C93B54",
+    "ISOLATION": "#2E8B4F",
+    "RUBOUT": "#6B46C1",
+    "CUTOUT": "#C93B54",
+    "DRILL": "#177F76",
+    "SILKSCREEN": "#B23A78",
+    "RAPID": "#C2C2D0",
+    "PAUSE": "#9A6E12",
+    "WARN_FILL": "rgba(154, 110, 18, 26)",
+    "WARN_LINE": "rgba(154, 110, 18, 70)",
+}
 
-BLUE = "#89B4FA"
-GREEN = "#A6E3A1"
-RED = "#F38BA8"
-YELLOW = "#F9E2AF"
-MAUVE = "#CBA6F7"
-PEACH = "#FAB387"
-TEAL = "#94E2D5"
-PINK = "#F5C2E7"
+MODE = "dark"
+DENSITY = "compact"
 
-COPPER_TOP = PEACH
-COPPER_BOTTOM = BLUE
-OUTLINE = RED
-ISOLATION = GREEN
-RUBOUT = MAUVE
-CUTOUT = RED
-DRILL = TEAL
-SILKSCREEN = PINK
-RAPID = "#4E4E6E"
-PAUSE = YELLOW
+_DENSITY_SCALE = {"compact": 1.0, "comfortable": 1.22}
 
 FONT_FAMILY = '"Segoe UI", "Inter", "Helvetica Neue", sans-serif'
 MONO_FAMILY = '"Cascadia Mono", "Consolas", monospace'
+
+
+def _assign(values: dict[str, str]) -> None:
+    globals().update(values)
+
+
+_assign(_AMOLED)
 
 
 def qcolor(value: str, alpha: int | None = None) -> QColor:
@@ -47,7 +96,7 @@ def qcolor(value: str, alpha: int | None = None) -> QColor:
     return colour
 
 
-STYLESHEET = f"""
+_TEMPLATE = """
 QWidget {{
     background-color: {BASE};
     color: {TEXT};
@@ -246,8 +295,8 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
 #StatusValue {{ font-size: 11.5px; font-weight: 600; background: transparent; }}
 
 #WarningStrip {{
-    background-color: rgba(249, 226, 175, 24);
-    border: 1px solid rgba(249, 226, 175, 64);
+    background-color: {WARN_FILL};
+    border: 1px solid {WARN_LINE};
     border-radius: 7px;
 }}
 #WarningStrip QLabel {{ background: transparent; color: {YELLOW}; font-size: 11px; }}
@@ -258,6 +307,45 @@ QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
     border-radius: 10px;
 }}
 """
+
+
+def _scale_css(css: str, factor: float) -> str:
+    if abs(factor - 1.0) < 1e-6:
+        return css
+
+    def bump(match) -> str:
+        value = float(match.group(2)) * factor
+        return f"{match.group(1)}{value:.1f}{match.group(3)}"
+
+    css = re.sub(r"(font-size:\s*)([\d.]+)(px)", bump, css)
+    css = re.sub(r"(padding:\s*)([\d.]+)(px)", bump, css)
+    css = re.sub(r"(min-height:\s*)([\d.]+)(px)", bump, css)
+    css = re.sub(r"((?:^|\s)width:\s*)([\d.]+)(px)", bump, css)
+    return css
+
+
+def stylesheet() -> str:
+    values = {key: value for key, value in globals().items() if isinstance(value, str)}
+    css = _TEMPLATE.format(**values)
+    return _scale_css(css, _DENSITY_SCALE.get(DENSITY, 1.0))
+
+
+STYLESHEET = stylesheet()
+
+
+def set_mode(value: str) -> str:
+    global MODE, STYLESHEET
+    MODE = "light" if str(value).lower() == "light" else "dark"
+    _assign(_LIGHT if MODE == "light" else _AMOLED)
+    STYLESHEET = stylesheet()
+    return MODE
+
+
+def set_density(value: str) -> str:
+    global DENSITY, STYLESHEET
+    DENSITY = "comfortable" if str(value).lower() == "comfortable" else "compact"
+    STYLESHEET = stylesheet()
+    return DENSITY
 
 
 def apply(app) -> None:

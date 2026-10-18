@@ -52,7 +52,7 @@ _APP_MODULES = (
 SKILL_TEXT = """# Wegstr PCB Slicer
 
 Use the `wegstr-pcb-slicer` MCP server to turn PCB artwork into G-code for a
-Wegstr Light CNC (140 x 90 x 40 mm).
+Wegstr Light CNC (140 x 200 x 40 mm).
 
 ## Start here
 
@@ -70,7 +70,7 @@ Wegstr Light CNC (140 x 90 x 40 mm).
 - Always `list_layers` after loading. If a file got the wrong role, reload it
   with `add_files` and pass `roles`.
 - Never assume a board fits. `plan` reports the envelope; a board larger than
-  140 x 90 mm is a hard error.
+  140 x 200 mm is a hard error.
 - Isolation depth is normally 0.05 mm. Cut-out depth must exceed the board
   thickness (1.6 mm) to cut through.
 - Read `plan.warnings`. Flip instructions for double-sided boards appear there.
@@ -244,17 +244,27 @@ def _project_payload() -> dict[str, Any]:
     outline = project.outline
     if outline is not None and outline.bounds is not None:
         minx, miny, maxx, maxy = outline.bounds
+        width = maxx - minx
+        height = maxy - miny
         payload["artwork"] = {
-            "width": round(maxx - minx, 3),
-            "height": round(maxy - miny, 3),
+            "width": round(width, 3),
+            "height": round(height, 3),
             "bounds": [round(v, 3) for v in outline.bounds],
         }
-        fits = (maxx - minx) <= STATE.profile.work_x and (maxy - miny) <= STATE.profile.work_y
-        payload["fits_work_area"] = bool(fits)
-        if not fits:
+        direct = width <= STATE.profile.work_x and height <= STATE.profile.work_y
+        swapped = height <= STATE.profile.work_x and width <= STATE.profile.work_y
+        rotation = 0 if direct else (90 if (swapped and STATE.config.auto_rotate) else 0)
+        payload["fits_work_area"] = bool(direct or rotation)
+        payload["rotation_required"] = rotation
+        if not direct and not rotation:
             payload["note"] = (
-                f"Artwork is {maxx - minx:.1f} x {maxy - miny:.1f} mm but the "
-                f"machine bed is {STATE.profile.work_x:.0f} x {STATE.profile.work_y:.0f} mm."
+                f"Artwork is {width:.1f} x {height:.1f} mm but the machine bed is "
+                f"{STATE.profile.work_x:.0f} x {STATE.profile.work_y:.0f} mm."
+            )
+        elif rotation:
+            payload["note"] = (
+                f"Artwork is {width:.1f} x {height:.1f} mm; it will be rotated "
+                f"{rotation} degrees to fit."
             )
     else:
         payload["note"] = "No board outline layer was found."

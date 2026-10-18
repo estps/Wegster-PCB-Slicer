@@ -34,7 +34,7 @@ class MachineProfile:
     name: str = "Wegstr Light CNC"
 
     work_x: float = 140.0
-    work_y: float = 90.0
+    work_y: float = 200.0
     work_z: float = 40.0
 
     rapid_z: float = 2.0

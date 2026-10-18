@@ -1,6 +1,7 @@
 # Wegstr PCB Slicer
 
-A desktop PCB slicer and G-code generator for the **Wegstr Light CNC**.
+A desktop PCB slicer and G-code generator for the **Wegstr Light CNC**
+(140 × 200 × 40 mm work area).
 Feed it a Gerber archive, get back machine-ready G-code — plus a step-by-step
 build guide telling you which file to run, with which tool, and when to flip
 the board.
@@ -30,7 +31,10 @@ the board.
 - **Peck drilling** — one file per bit, full retracts to clear chips.
 - **Double-sided registration** — two deep pin holes define the flip axis (the
   perpendicular bisector of the pair), so the back layer registers without
-  re-zeroing X or Y.
+  re-zeroing X or Y. Pins are placed automatically: a fixed distance apart
+  (80 mm), at least 5 mm clear of the board's top edge, with the board centred
+  on the flip axis. The pin holes are 2 mm by default and both values are
+  adjustable.
 - **G-code verification** — every generated file is re-read and checked against
   the machine envelope before you ever hit cycle start.
 - **G-code viewer** — open any `.gcode`, scrub through it, and see rapids,
@@ -46,6 +50,10 @@ the board.
   `Wegstr PCB Slicer.exe --mcp`.
 - **Add files one by one** — besides a `.zip`, you can hand it individual Gerber
   and drill files with **Add Files…**; each pick adds to the set.
+- **Auto-rotate to fit** — a board wider than the bed but shorter than its
+  length is rotated 90° automatically (a 150 × 90 mm board becomes 90 × 150 on
+  the 140 × 200 mm bed). Alignment pins are nudged onto the bed to match, and
+  both moves are reported in the warnings.
 
 ## Requirements
 

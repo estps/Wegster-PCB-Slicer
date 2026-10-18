@@ -858,7 +858,10 @@ class GerberParser:
             self._step_repeat(statement[2:])
             return
 
-        if statement in ("IP", "IR", "OF", "MI", "SF", "IN", "LN", "TF", "TA", "TO", "TD"):
+        if statement[:2].upper() in (
+            "IP", "IR", "OF", "MI", "SF", "IN", "LN",
+            "TF", "TA", "TO", "TD",
+        ):
             return
 
         self.warnings.append(f"ignored extended command: {statement!r}")

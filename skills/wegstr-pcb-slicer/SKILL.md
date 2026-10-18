@@ -5,7 +5,7 @@ description: Drive the Wegstr PCB Slicer MCP server (server name "wegstr") to tu
 
 # Wegstr PCB Slicer
 
-A desktop PCB slicer for the **Wegstr Light CNC** (140 x 90 x 40 mm,
+A desktop PCB slicer for the **Wegstr Light CNC** (140 x 200 x 40 mm,
 `G21`/`G90`, `M3`/`M5` spindle). The MCP server exposes the whole application.
 
 ## Connect
@@ -60,7 +60,7 @@ with `list_layers` before planning.
 
 ## Hard rules
 
-- A board larger than 140 x 90 mm cannot be cut. `list_layers` reports
+- A board larger than 140 x 200 mm cannot be cut. `list_layers` reports
   `fits_work_area`; `plan` fails hard on oversize boards.
 - Isolation depth is normally 0.05 mm. Cut-out depth must exceed board
   thickness (1.6 mm default).

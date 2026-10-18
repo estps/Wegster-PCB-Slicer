@@ -400,10 +400,26 @@ def test_silkscreen_and_alignment(archive: Path) -> None:
         check(drilled == wanted, f"pins drilled at the configured positions {drilled}")
 
         axis_kind, axis_coordinate = pin_axis(*config.pins())
+        board_centre = plan.board.outline.bounds[0] + plan.board.width / 2.0
         check(
-            axis_kind == "vertical" and abs(axis_coordinate - 40.0) < 1e-9,
-            f"pins (0,0)/(80,0) imply a vertical axis at X=40 "
-            f"(got {axis_kind} {axis_coordinate:.2f})",
+            axis_kind == "vertical",
+            f"the two pins imply a vertical flip axis (got {axis_kind})",
+        )
+        check(
+            abs(axis_coordinate - board_centre) < 0.5,
+            f"flip axis X={axis_coordinate:.2f} passes through the board centre "
+            f"X={board_centre:.2f}",
+        )
+        span = abs(config.alignment_pin2_x - config.alignment_pin1_x)
+        check(
+            abs(span - config.alignment_pin_span) < 1e-6,
+            f"pins are {span:.1f} mm apart",
+        )
+        top = plan.board.outline.bounds[3]
+        pin_y = min(config.alignment_pin1_y, config.alignment_pin2_y)
+        check(
+            pin_y - top >= config.alignment_pin_clearance - 1e-6,
+            f"pins sit {pin_y - top:.1f} mm above the board top",
         )
 
         pin1, pin2 = config.pins()
@@ -1047,6 +1063,182 @@ def test_mcp_bridge() -> None:
         check(payload_of(8)["layers"], "add_files accepts a role map")
 
 
+def test_machine_envelope() -> None:
+    print("\n== Machine work area ==")
+    import tempfile
+
+    from gerber_io import load_files
+    from wegstr_gcode import WEGSTR_LIGHT, MachineProfile
+
+    profile = MachineProfile()
+    check(
+        abs(profile.work_x - 140.0) < 1e-6 and abs(profile.work_y - 200.0) < 1e-6,
+        f"Wegstr Light work area is {profile.work_x:.0f} x {profile.work_y:.0f} mm",
+    )
+    check(
+        abs(WEGSTR_LIGHT.work_y - 200.0) < 1e-6,
+        "the shipped WEGSTR_LIGHT profile uses 200 mm",
+    )
+    config = SlicerConfig()
+    check(
+        abs(config.machine_x - 140.0) < 1e-6 and abs(config.machine_y - 200.0) < 1e-6,
+        f"slicer defaults match ({config.machine_x:.0f} x {config.machine_y:.0f} mm)",
+    )
+
+    gerber = (
+        "%FSLAX46Y46*%\n%MOMM*%\n%LPD*%\nG01*\nG90*\n%ADD10C,0.150000*%\n"
+        "D10*\nX0Y0D02*\nX60000000Y0D01*\nX60000000Y150000000D01*\n"
+        "X0Y150000000D01*\nX0Y0D01*\nM02*\n"
+    )
+    with tempfile.TemporaryDirectory(prefix="wegstr_tall_") as tmp:
+        outline = Path(tmp) / "tall.GKO"
+        outline.write_text(gerber, encoding="utf-8", newline="\n")
+        project = load_files([outline])
+        try:
+            check(
+                abs(project.outline.bounds[3] - project.outline.bounds[1] - 150.0) < 0.5,
+                "test board is 150 mm tall",
+            )
+            plan = plan_toolpaths(project, SlicerConfig())
+            check(
+                plan.board.height > 140.0,
+                f"a 150 mm tall board plans on the 200 mm bed ({plan.board.height:.1f} mm)",
+            )
+            try:
+                plan_toolpaths(project, SlicerConfig(machine_y=90.0))
+                check(False, "the old 90 mm limit should have rejected it")
+            except SlicerError:
+                check(True, "the old 90 mm limit rejects the same board")
+        finally:
+            project.cleanup()
+
+
+def test_rotation_and_pins() -> None:
+    print("\n== Auto-rotation and pin placement ==")
+    import tempfile
+
+    from gerber_io import load_files
+
+    def rectangle(width: float, height: float) -> str:
+        def c(v: float) -> int:
+            return int(round(v * 1_000_000))
+
+        return (
+            "%FSLAX46Y46*%\n%MOMM*%\n%LPD*%\nG01*\nG90*\n%ADD10C,0.150000*%\n"
+            f"D10*\nX0Y0D02*\nX{c(width)}Y0D01*\nX{c(width)}Y{c(height)}D01*\n"
+            f"X0Y{c(height)}D01*\nX0Y0D01*\nM02*\n"
+        )
+
+    with tempfile.TemporaryDirectory(prefix="wegstr_rot_") as tmp:
+        wide = Path(tmp) / "wide.GKO"
+        wide.write_text(rectangle(150.0, 90.0), encoding="utf-8", newline="\n")
+        project = load_files([wide])
+        try:
+            config = SlicerConfig()
+            config.alignment_holes = False
+            config.mill_bottom = False
+            plan = plan_toolpaths(project, config)
+            check(plan.board.rotation == 90, f"rotated {plan.board.rotation} degrees to fit")
+            check(
+                abs(plan.board.width - 90.0) < 1.0 and abs(plan.board.height - 150.0) < 1.0,
+                f"board became {plan.board.width:.1f} x {plan.board.height:.1f} mm",
+            )
+            check(
+                plan.board.width <= config.machine_x and plan.board.height <= config.machine_y,
+                "rotated board fits the bed",
+            )
+            check(
+                any("Rotated the board" in w for w in plan.warnings),
+                "rotation is reported",
+            )
+
+            config = SlicerConfig()
+            config.alignment_holes = True
+            config.alignment_pins_auto = True
+            config.alignment_hole_diameter = 2.0
+            config.mill_bottom = False
+            plan = plan_toolpaths(project, config)
+            pins = plan.board.pins
+            check(pins is not None and plan.board.pins_auto, "auto placement is reported")
+            if pins is not None:
+                check(
+                    abs(abs(pins[1][0] - pins[0][0]) - 80.0) < 1e-6,
+                    "auto pins are exactly 80 mm apart",
+                )
+                top = plan.board.outline.bounds[3]
+                gap = min(y for _, y in pins) - top
+                check(
+                    gap >= 5.0 - 1e-6,
+                    f"auto pins sit {gap:.1f} mm above the board top (>= 5 mm)",
+                )
+                centre = (pins[0][0] + pins[1][0]) / 2.0
+                board_centre = plan.board.outline.bounds[0] + plan.board.width / 2.0
+                check(
+                    abs(centre - board_centre) < 0.5,
+                    "auto placement centres the board on the flip axis",
+                )
+                check(
+                    all(0.0 <= x <= config.machine_x and 0.0 <= y <= config.machine_y for x, y in pins),
+                    "auto pins stay on the bed",
+                )
+            alignment = next(g for g in plan.groups if g.kind == "alignment")
+            check(
+                abs(alignment.tool.diameter - 2.0) < 1e-9,
+                f"the alignment group drills {alignment.tool.diameter:.1f} mm holes",
+            )
+            check(
+                any("Locating pins placed" in w for w in plan.warnings),
+                "auto placement is reported in the warnings",
+            )
+
+            config = SlicerConfig()
+            config.alignment_holes = True
+            config.alignment_pins_auto = False
+            config.mill_bottom = False
+            config.alignment_pin1_x = 0.0
+            config.alignment_pin2_x = 80.0
+            config.alignment_pin1_y = 0.0
+            config.alignment_pin2_y = 0.0
+            plan = plan_toolpaths(project, config)
+            pins = plan.board.pins
+            check(pins is not None, "effective pins are recorded")
+            if pins is not None:
+                check(
+                    all(0.0 <= x <= config.machine_x for x, _ in pins),
+                    f"pins stay on the bed: {[(round(x, 1), round(y, 1)) for x, y in pins]}",
+                )
+                centre = (pins[0][0] + pins[1][0]) / 2.0
+                check(
+                    abs(centre - (plan.board.outline.bounds[0] + plan.board.width / 2.0)) < 0.5,
+                    "board stays centred on the pin axis",
+                )
+            check(
+                any("Moved the alignment pins" in w for w in plan.warnings),
+                "manual pin adjustment is reported",
+            )
+            check(
+                min(h.x for g in plan.groups for h in g.holes) >= 0.0
+                if any(g.holes for g in plan.groups)
+                else True,
+                "no drilled hole lands at a negative coordinate",
+            )
+
+            config = SlicerConfig()
+            config.alignment_holes = False
+            config.mill_bottom = False
+            config.auto_rotate = False
+            try:
+                plan_toolpaths(project, config)
+                check(False, "auto_rotate=False should reject the 150 mm board")
+            except SlicerError:
+                check(
+                    True,
+                    "auto_rotate=False leaves it unrotated and rejects the 150 mm side",
+                )
+        finally:
+            project.cleanup()
+
+
 def main() -> int:
     import tempfile
 
@@ -1074,6 +1266,8 @@ def main() -> int:
     test_start_menu_shortcut()
     test_file_by_file()
     test_mcp_bridge()
+    test_machine_envelope()
+    test_rotation_and_pins()
     test_clearance_and_feeds(archive)
     test_updater_versions()
 

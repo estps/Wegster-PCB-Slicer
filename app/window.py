@@ -653,6 +653,11 @@ class MainWindow(QMainWindow):
             1, " mm",
         )
         self._bind_toggle(
+            card, "Auto-rotate to fit",
+            lambda: self.config.auto_rotate,
+            lambda v: setattr(self.config, "auto_rotate", v),
+        )
+        self._bind_toggle(
             card, "Front copper (top)",
             lambda: self.config.mill_top,
             lambda v: setattr(self.config, "mill_top", v),
@@ -1133,6 +1138,15 @@ class MainWindow(QMainWindow):
             lambda v: setattr(self.config, "alignment_holes", v),
         )
         self._bind_slider(
+            card, "Pin diameter", 1.0, 6.0,
+            lambda: self.config.alignment_hole_diameter,
+            lambda v: setattr(self.config, "alignment_hole_diameter", v),
+            2, " mm",
+        ).setToolTip(
+            "Size of the locating pins, and therefore the hole the alignment\n"
+            "file drills. 2 mm is the default."
+        )
+        self._bind_slider(
             card, "Pin depth", 1.0, 20.0,
             lambda: self.config.alignment_hole_depth,
             lambda v: setattr(self.config, "alignment_hole_depth", v),
@@ -1141,32 +1155,56 @@ class MainWindow(QMainWindow):
             "Goes through the blank and into the spoilboard so pins have something\n"
             "to seat in. 10 mm is a good default."
         )
+
+        card.add_section_label("Pin placement")
+        self._bind_toggle(
+            card, "Place pins automatically",
+            lambda: self.config.alignment_pins_auto,
+            lambda v: setattr(self.config, "alignment_pins_auto", v),
+        ).setToolTip(
+            "Places the pins a fixed distance apart, clear of the board's top\n"
+            "edge, with the board centred on the flip axis."
+        )
+        self._bind_slider(
+            card, "Pin spacing", 20.0, 140.0,
+            lambda: self.config.alignment_pin_span,
+            lambda v: setattr(self.config, "alignment_pin_span", v),
+            1, " mm",
+        )
+        self._bind_slider(
+            card, "Clearance above board", 0.0, 40.0,
+            lambda: self.config.alignment_pin_clearance,
+            lambda v: setattr(self.config, "alignment_pin_clearance", v),
+            1, " mm",
+        )
+
         card.add_label(
-            "Gets its own file, 01_alignment.gcode, and runs first. No tool change "
-            "- it uses whatever bit is already in the spindle, and that bit's size "
-            "is your pin size.",
+            "Gets its own file, 01_alignment.gcode, and runs first. It drills "
+            "with the pin diameter above, then pauses for a tool change.",
             "Hint",
         )
 
         card.add_section_label("Pin positions (machine coordinates)")
         machine_x = self.profile.work_x
         machine_y = self.profile.work_y
+        self._pin_rows: list[SliderRow] = []
         for label, axis, limit in (
             ("Pin 1  X", "alignment_pin1_x", machine_x),
             ("Pin 1  Y", "alignment_pin1_y", machine_y),
             ("Pin 2  X", "alignment_pin2_x", machine_x),
             ("Pin 2  Y", "alignment_pin2_y", machine_y),
         ):
-            self._bind_slider(
+            row = self._bind_slider(
                 card, label, 0.0, float(limit),
                 lambda a=axis: getattr(self.config, a),
                 lambda v, a=axis: setattr(self.config, a, v),
                 1, " mm",
             )
+            self._pin_rows.append(row)
         card.add_label(
-            "The flip axis is the line halfway between the two pins, and the "
-            "board is centred on it automatically. Defaults give a pin at the "
-            "origin and one 80 mm to the right.",
+            "When automatic placement is on these are overwritten on every "
+            "recompute: the flip axis is the line halfway between the pins and "
+            "the board is centred on it.",
             "Hint",
         )
 
@@ -1394,6 +1432,8 @@ class MainWindow(QMainWindow):
         self.angle_row.set_enabled(is_vbit)
         self.tip_row.set_enabled(is_vbit)
         self.tool_diameter_row.set_enabled(not is_vbit)
+        for row in getattr(self, "_pin_rows", []):
+            row.set_enabled(not self.config.alignment_pins_auto)
         self.subtitle.setText(
             f"{self.profile.name}   ·   {self.config.origin_mode.replace('_', '-')}"
         )
@@ -1596,9 +1636,15 @@ class MainWindow(QMainWindow):
         self.sides_hint.setText("  ".join(problems))
         self.sides_hint.setVisible(bool(problems))
 
+    def _sync_envelope(self) -> None:
+        self.config.machine_x = self.profile.work_x
+        self.config.machine_y = self.profile.work_y
+        self.config.machine_z = self.profile.work_z
+
     def _request_plan(self) -> None:
         if self.project is None:
             return
+        self._sync_envelope()
         self._debounce.stop()
         self.progress.setVisible(True)
         self.recompute_button.setEnabled(False)
@@ -1641,6 +1687,7 @@ class MainWindow(QMainWindow):
         self.progress.setVisible(False)
         self.recompute_button.setEnabled(True)
         self._update_verify_card(report)
+        self._refresh_widgets()
 
         if not self._gcode_mode:
             self.viewer.set_plan(
@@ -1747,6 +1794,7 @@ class MainWindow(QMainWindow):
             return
 
         out_dir = Path(directory) / f"{stem}_milling"
+        self._sync_envelope()
         try:
             package = write_package(
                 self.plan, self.config, self.profile, out_dir, stem

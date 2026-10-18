@@ -114,11 +114,16 @@ class DepthStrategy:
 class SlicerConfig:
 
     machine_x: float = 140.0
-    machine_y: float = 90.0
+    machine_y: float = 200.0
     machine_z: float = 40.0
     origin_mode: str = "lower_left"
     margin: float = 2.0
     enforce_envelope: bool = True
+    auto_rotate: bool = True
+    rotation: int = 0
+    alignment_pins_auto: bool = True
+    alignment_pin_span: float = 80.0
+    alignment_pin_clearance: float = 5.0
 
     isolation_tool: ToolSpec = field(
         default_factory=lambda: ToolSpec("0.1mm 30deg V-bit", "vbit", 0.1, 0.0, 30.0)
@@ -177,7 +182,7 @@ class SlicerConfig:
 
     alignment_holes: bool = False
     alignment_hole_depth: float = 10.0
-    alignment_hole_diameter: float = 3.0
+    alignment_hole_diameter: float = 2.0
     alignment_pin1_x: float = 0.0
     alignment_pin1_y: float = 0.0
     alignment_pin2_x: float = 80.0
@@ -514,6 +519,10 @@ class BoardGeometry:
     source_size: tuple[float, float]
     silkscreen: dict[str, BaseGeometry] = field(default_factory=dict)
     pads: dict[str, BaseGeometry] = field(default_factory=dict)
+    rotation: int = 0
+    pins: tuple[tuple[float, float], tuple[float, float]] | None = None
+    pins_shifted: bool = False
+    pins_auto: bool = False
 
     @property
     def width(self) -> float:
@@ -619,6 +628,34 @@ def _outline_from_features(project: PcbProject, margin: float) -> Polygon:
     return hull.buffer(margin, join_style="mitre", quad_segs=1)
 
 
+def _rotation_for(width: float, height: float, config: SlicerConfig) -> int:
+    if config.rotation in (90, 180, 270):
+        return config.rotation
+    if not config.auto_rotate:
+        return 0
+    if width <= config.machine_x and height <= config.machine_y:
+        return 0
+    if height <= config.machine_x and width <= config.machine_y:
+        return 90
+    return 0
+
+
+def _rotate_geometry(geom: BaseGeometry | None, angle: int) -> BaseGeometry | None:
+    if geom is None or not angle:
+        return geom
+    return affinity.rotate(geom, float(angle), origin=(0.0, 0.0), use_radians=False)
+
+
+def _rotate_point(x: float, y: float, angle: int) -> tuple[float, float]:
+    if angle == 90:
+        return (-y, x)
+    if angle == 180:
+        return (-x, -y)
+    if angle == 270:
+        return (y, -x)
+    return (x, y)
+
+
 def build_board(project: PcbProject, config: SlicerConfig) -> BoardGeometry:
     warnings: list[str] = []
     try:
@@ -633,6 +670,13 @@ def build_board(project: PcbProject, config: SlicerConfig) -> BoardGeometry:
     if source_width <= 0 or source_height <= 0:
         raise SlicerError("Board outline has zero extent.")
 
+    rotation = _rotation_for(source_width, source_height, config)
+    if rotation:
+        outline = _rotate_geometry(outline, rotation)
+        minx, miny, maxx, maxy = outline.bounds
+        source_width = maxx - minx
+        source_height = maxy - miny
+
     margin_x = margin_y = config.margin
     if config.origin_mode == "center":
         offset_x = max(margin_x, (config.machine_x - source_width) / 2.0)
@@ -641,8 +685,62 @@ def build_board(project: PcbProject, config: SlicerConfig) -> BoardGeometry:
         offset_x = margin_x
         offset_y = margin_y
 
-    if config.alignment_holes:
-        axis_kind, axis_coordinate = pin_axis(*config.pins())
+    pins = config.pins()
+    pins_shifted = False
+    pins_auto = False
+    if config.alignment_holes and config.alignment_pins_auto:
+        pins_auto = True
+        span = max(1.0, config.alignment_pin_span)
+        clearance = max(0.0, config.alignment_pin_clearance)
+        centre_x = config.machine_x / 2.0
+        offset_x = min(
+            max(centre_x - source_width / 2.0, margin_x),
+            config.machine_x - margin_x - source_width,
+        )
+        offset_y = max(margin_y, (config.machine_y - source_height) / 2.0)
+        top = offset_y + source_height
+        if top + clearance > config.machine_y - margin_y:
+            offset_y = max(
+                margin_y, config.machine_y - margin_y - clearance - source_height
+            )
+            top = offset_y + source_height
+        pin_y = top + clearance
+        pins = (
+            (centre_x - span / 2.0, pin_y),
+            (centre_x + span / 2.0, pin_y),
+        )
+    elif config.alignment_holes:
+        axis_kind, axis_coordinate = pin_axis(*pins)
+        if axis_kind == "vertical":
+            low = axis_coordinate - source_width / 2.0
+            high = axis_coordinate + source_width / 2.0
+            if low < margin_x or high > config.machine_x - margin_x:
+                desired = min(
+                    max(axis_coordinate, margin_x + source_width / 2.0),
+                    config.machine_x - margin_x - source_width / 2.0,
+                )
+                delta = desired - axis_coordinate
+                pins = (
+                    (pins[0][0] + delta, pins[0][1]),
+                    (pins[1][0] + delta, pins[1][1]),
+                )
+                pins_shifted = True
+        elif axis_kind == "horizontal":
+            low = axis_coordinate - source_height / 2.0
+            high = axis_coordinate + source_height / 2.0
+            if low < margin_y or high > config.machine_y - margin_y:
+                desired = min(
+                    max(axis_coordinate, margin_y + source_height / 2.0),
+                    config.machine_y - margin_y - source_height / 2.0,
+                )
+                delta = desired - axis_coordinate
+                pins = (
+                    (pins[0][0], pins[0][1] + delta),
+                    (pins[1][0], pins[1][1] + delta),
+                )
+                pins_shifted = True
+
+        axis_kind, axis_coordinate = pin_axis(*pins)
         if axis_kind == "vertical":
             offset_x = axis_coordinate - source_width / 2.0
         elif axis_kind == "horizontal":
@@ -663,7 +761,7 @@ def build_board(project: PcbProject, config: SlicerConfig) -> BoardGeometry:
         if side != "bottom" or not config.mirror_bottom:
             return geom
         if config.alignment_holes:
-            return reflect_about_pin_axis(geom, *config.pins())
+            return reflect_about_pin_axis(geom, *pins)
         if config.flip_axis == "vertical":
             axis = offset_x + source_width / 2.0
             return affinity.scale(geom, xfact=-1.0, yfact=1.0, origin=(axis, 0.0))
@@ -690,20 +788,25 @@ def build_board(project: PcbProject, config: SlicerConfig) -> BoardGeometry:
             geom = _clean(layer.geometry)
             if geom is None:
                 continue
+            geom = _rotate_geometry(geom, rotation)
+            if geom is None:
+                continue
             geom = to_machine(geom)
             if geom is None:
                 continue
             store[side] = flip(geom, side)
 
-    holes = [
-        DrillHit(
-            x=hole.x + shift_x,
-            y=hole.y + shift_y,
-            diameter=hole.diameter,
-            plated=hole.plated,
+    holes = []
+    for hole in project.all_holes:
+        hx, hy = _rotate_point(hole.x, hole.y, rotation)
+        holes.append(
+            DrillHit(
+                x=hx + shift_x,
+                y=hy + shift_y,
+                diameter=hole.diameter,
+                plated=hole.plated,
+            )
         )
-        for hole in project.all_holes
-    ]
 
     return BoardGeometry(
         outline=machine_outline,
@@ -713,6 +816,10 @@ def build_board(project: PcbProject, config: SlicerConfig) -> BoardGeometry:
         source_size=(source_width, source_height),
         silkscreen=silkscreen,
         pads=pads,
+        rotation=rotation,
+        pins=pins,
+        pins_shifted=pins_shifted,
+        pins_auto=pins_auto,
     )
 
 
@@ -768,12 +875,12 @@ def generate_isolation(
 def generate_alignment_holes(
     board: BoardGeometry, config: SlicerConfig
 ) -> list[DrillHit]:
-    del board
     if not config.alignment_holes:
         return []
 
+    pins = board.pins or config.pins()
     holes: list[DrillHit] = []
-    for x, y in config.pins():
+    for x, y in pins:
         if x < 0 or y < 0 or x > config.machine_x or y > config.machine_y:
             raise SlicerError(
                 f"Alignment pin at ({x:.1f}, {y:.1f}) mm falls outside the "
@@ -1095,8 +1202,34 @@ def plan_toolpaths(project: PcbProject, config: SlicerConfig) -> ToolpathPlan:
     board = build_board(project, config)
     plan = ToolpathPlan(board=board)
 
+    if board.rotation:
+        plan.warnings.append(
+            f"Rotated the board {board.rotation} degrees to fit the "
+            f"{config.machine_x:.0f} x {config.machine_y:.0f} mm work area. "
+            f"Load the stock with the board's long side along Y."
+        )
+
+    if board.pins is not None and (board.pins_shifted or board.pins_auto):
+        config.alignment_pin1_x, config.alignment_pin1_y = board.pins[0]
+        config.alignment_pin2_x, config.alignment_pin2_y = board.pins[1]
+        if board.pins_auto:
+            span = abs(board.pins[1][0] - board.pins[0][0])
+            plan.warnings.append(
+                f"Locating pins placed {span:.0f} mm apart at Y="
+                f"{board.pins[0][1]:.1f} mm, "
+                f"{config.alignment_pin_clearance:.1f} mm above the board, with the "
+                f"board centred on the flip axis. Drill 01_alignment first."
+            )
+        else:
+            plan.warnings.append(
+                f"Moved the alignment pins to ({board.pins[0][0]:.1f}, "
+                f"{board.pins[0][1]:.1f}) and ({board.pins[1][0]:.1f}, "
+                f"{board.pins[1][1]:.1f}) so the board stays on the bed. "
+                f"Re-drill 01_alignment before flipping."
+            )
+
     if config.alignment_holes and config.mill_bottom:
-        reflected = reflect_about_pin_axis(board.outline, *config.pins())
+        reflected = reflect_about_pin_axis(board.outline, *(board.pins or config.pins()))
         original = board.outline.bounds
         flipped = reflected.bounds
         shift = max(abs(original[i] - flipped[i]) for i in range(4)) / 2.0

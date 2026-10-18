@@ -71,7 +71,7 @@ class ToolpathView(QGraphicsView):
         self._layers: list[PathLayer] = []
         self._holes: list[tuple[float, float, float]] = []
         self._show_copper = True
-        self._show_copper_fill = False
+        self._show_copper_fill = True
         self._show_outline = True
         self._show_bed = True
         self._show_holes = True
@@ -576,11 +576,15 @@ class ToolpathView(QGraphicsView):
                 if self._show_copper_fill:
                     fill = theme.qcolor(colour)
                     fill.setAlpha(238)
+                    painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
                     painter.setBrush(fill)
                     painter.setPen(QPen(theme.qcolor(colour, 255), 0.0))
-                else:
-                    painter.setBrush(Qt.BrushStyle.NoBrush)
-                    painter.setPen(QPen(theme.qcolor(colour, 170), 0.0))
+                    for path in paths:
+                        painter.drawPath(path)
+                    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+                    continue
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.setPen(QPen(theme.qcolor(colour, 170), 0.0))
                 for path in paths:
                     painter.drawPath(path)
 

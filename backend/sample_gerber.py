@@ -76,6 +76,7 @@ def _bottom_copper() -> str:
         for y in (12.0, 24.0):
             text += _flash(11, x, y)
     text += _draw(12, [(16.0, 12.0), (40.0, 12.0)])
+    text += _flash(11, 7.0, 35.0)
     text += "M02*\n"
     return text
 
@@ -109,6 +110,15 @@ def _bottom_solder_mask() -> str:
     for x in (12.0, 28.0, 44.0):
         for y in (12.0, 24.0):
             text += _flash(10, x, y)
+    text += "M02*\n"
+    return text
+
+
+def _bottom_silkscreen() -> str:
+    text = _header("Legend,Bot")
+    text += _apertures(["10C,0.150000"])
+    text += _draw(10, [(6.0, 5.0), (18.0, 5.0), (18.0, 9.0), (6.0, 9.0), (6.0, 5.0)])
+    text += _draw(10, [(48.0, 31.0), (56.0, 31.0)])
     text += "M02*\n"
     return text
 
@@ -169,6 +179,7 @@ def write_sample_gerber(directory: str | Path) -> Path:
         "Sample_BottomLayer.GBL": _bottom_copper(),
         "Sample_BoardOutlineLayer.GKO": _outline(),
         "Sample_TopSilkscreenLayer.GTO": _silkscreen(),
+        "Sample_BottomSilkscreenLayer.GBO": _bottom_silkscreen(),
         "Sample_TopSolderMaskLayer.GTS": _top_solder_mask(),
         "Sample_BottomSolderMaskLayer.GBS": _bottom_solder_mask(),
         "Drill_PTH_Through.DRL": _pth_drill(),

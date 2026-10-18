@@ -1462,6 +1462,86 @@ def test_custom_origin(archive: Path) -> None:
         project.cleanup()
 
 
+def test_double_sided_layout() -> None:
+    print("\n== Double-sided files and mirroring ==")
+    import tempfile
+
+    from exporter import plan_export_files
+    from pcb_engine import pin_axis
+    from sample_gerber import write_sample_gerber
+
+    with tempfile.TemporaryDirectory(prefix="wegstr_ds_") as tmp:
+        archive = write_sample_gerber(Path(tmp) / "gerber")
+        project = load_project(archive)
+        try:
+            def build(mirror: bool):
+                config = SlicerConfig()
+                config.mill_bottom = True
+                config.alignment_holes = True
+                config.mirror_bottom = mirror
+                config.silkscreen_enabled = True
+                config.silkscreen_bottom = True
+                plan = plan_toolpaths(project, config)
+                axis = pin_axis(*plan.board.pins)[1]
+                return plan, axis, config
+
+            plan, axis, config = build(True)
+            files = plan_export_files(plan, config)
+            names = [f.filename for f in files]
+            check(
+                any("isolation_top" in n for n in names)
+                and any("isolation_bottom" in n for n in names),
+                f"separate front and back isolation files exist",
+            )
+            check(
+                sum(1 for n in names if "isolation" in n) == 2,
+                f"exactly two isolation files ({sum(1 for n in names if 'isolation' in n)})",
+            )
+            check(
+                any("silkscreen_cutout_top" in n for n in names)
+                and any("silkscreen_cutout_bottom" in n for n in names),
+                "separate front and back silkscreen files exist",
+            )
+            bottom = next(f for f in files if "isolation_bottom" in f.filename)
+            check(bottom.requires_flip_before, "the back isolation file asks for the flip")
+            check(
+                bottom.side == "bottom",
+                "the back isolation file is tagged bottom",
+            )
+
+            plain_plan, _, _ = build(False)
+            plain = plain_plan.board
+            mirrored = plan.board
+            check(
+                abs(axis - sum(p[0] for p in plan.board.pins) / 2.0) < 1e-6,
+                f"the mirror line is the pin bisector at X={axis:.2f}",
+            )
+            check(
+                plain.pins == mirrored.pins,
+                "mirroring does not move the pins",
+            )
+
+            for store, label in (
+                (mirrored.copper.get("bottom"), "copper"),
+                (mirrored.silkscreen.get("bottom"), "silkscreen"),
+            ):
+                reference = plain.copper.get("bottom") if label == "copper" else plain.silkscreen.get("bottom")
+                if store is None or reference is None:
+                    check(False, f"{label} bottom geometry is available")
+                    continue
+                expected_low = 2 * axis - reference.bounds[2]
+                expected_high = 2 * axis - reference.bounds[0]
+                check(
+                    abs(store.bounds[0] - expected_low) < 0.02
+                    and abs(store.bounds[2] - expected_high) < 0.02,
+                    f"{label} is mirrored about the pin line "
+                    f"({store.bounds[0]:.2f}..{store.bounds[2]:.2f} vs "
+                    f"{expected_low:.2f}..{expected_high:.2f})",
+                )
+        finally:
+            project.cleanup()
+
+
 def main() -> int:
     import tempfile
 
@@ -1494,6 +1574,7 @@ def main() -> int:
     test_copper_preview_shape(archive)
     test_pin_origin()
     test_custom_origin(archive)
+    test_double_sided_layout()
     test_clearance_and_feeds(archive)
     test_updater_versions()
 

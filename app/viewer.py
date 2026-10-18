@@ -71,6 +71,7 @@ class ToolpathView(QGraphicsView):
         self._layers: list[PathLayer] = []
         self._holes: list[tuple[float, float, float]] = []
         self._show_copper = True
+        self._show_copper_fill = False
         self._show_outline = True
         self._show_bed = True
         self._show_holes = True
@@ -315,6 +316,7 @@ class ToolpathView(QGraphicsView):
     def visibility(self) -> dict:
         return {
             "copper": self._show_copper,
+        "copper_fill": self._show_copper_fill,
             "outline": self._show_outline,
             "bed": self._show_bed,
             "holes": self._show_holes,
@@ -328,6 +330,9 @@ class ToolpathView(QGraphicsView):
         if not state:
             return
         self._show_copper = bool(state.get("copper", self._show_copper))
+        self._show_copper_fill = bool(
+            state.get("copper_fill", self._show_copper_fill)
+        )
         self._show_outline = bool(state.get("outline", self._show_outline))
         self._show_bed = bool(state.get("bed", self._show_bed))
         self._show_holes = bool(state.get("holes", self._show_holes))
@@ -344,6 +349,12 @@ class ToolpathView(QGraphicsView):
 
     def set_copper_visible(self, visible: bool) -> None:
         self._show_copper = visible
+        self._schedule_rebuild()
+        self.viewport().update()
+
+    def set_copper_fill(self, visible: bool) -> None:
+        self._show_copper_fill = visible
+        self._schedule_rebuild()
         self.viewport().update()
 
     def set_outline_visible(self, visible: bool) -> None:
@@ -562,10 +573,14 @@ class ToolpathView(QGraphicsView):
     def _paint_plan(self, painter: QPainter) -> None:
         if self._show_copper:
             for colour, paths in self._copper:
-                fill = theme.qcolor(colour)
-                fill.setAlpha(238)
-                painter.setPen(QPen(theme.qcolor(colour, 255), 0.0))
-                painter.setBrush(fill)
+                if self._show_copper_fill:
+                    fill = theme.qcolor(colour)
+                    fill.setAlpha(238)
+                    painter.setBrush(fill)
+                    painter.setPen(QPen(theme.qcolor(colour, 255), 0.0))
+                else:
+                    painter.setBrush(Qt.BrushStyle.NoBrush)
+                    painter.setPen(QPen(theme.qcolor(colour, 170), 0.0))
                 for path in paths:
                     painter.drawPath(path)
 

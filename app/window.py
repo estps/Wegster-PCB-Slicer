@@ -1331,6 +1331,9 @@ class MainWindow(QMainWindow):
         self._plain_toggle(
             card, "Copper traces", True, self.viewer.set_copper_visible, "copper"
         )
+        self._plain_toggle(
+            card, "Fill copper", False, self.viewer.set_copper_fill, "copper_fill"
+        )
         for kind, label in (
             ("isolation", "Isolation"),
             ("rubout", "Rub-out"),

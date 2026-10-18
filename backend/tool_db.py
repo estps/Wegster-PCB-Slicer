@@ -470,7 +470,14 @@ def recommend_tools(
                 f"{min_gap:.3f} mm copper clearance."
             )
         else:
-            cone_fit = _fit_within(conical, limit, isolation_depth)
+            sane = [t for t in conical if t.angle >= 20.0] or conical
+            cone_fit = (
+                min(sane, key=lambda t: t.cut_width(isolation_depth))
+                if sane
+                else None
+            )
+            if cone_fit is not None and cone_fit.cut_width(isolation_depth) > limit:
+                cone_fit = None
             if cone_fit is not None:
                 isolation = cone_fit
                 reasons["isolation"] = (

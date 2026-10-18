@@ -1235,8 +1235,78 @@ def test_rotation_and_pins() -> None:
                     True,
                     "auto_rotate=False leaves it unrotated and rejects the 150 mm side",
                 )
+
+            config.rotation = 90
+            plan = plan_toolpaths(project, config)
+            check(
+                plan.board.rotation == 90,
+                "an explicit 90 degree rotation is honoured",
+            )
+            check(
+                abs(plan.board.width - 90.0) < 1.0
+                and abs(plan.board.height - 150.0) < 1.0,
+                f"explicit 90 degrees gives {plan.board.width:.1f} x "
+                f"{plan.board.height:.1f} mm",
+            )
+
+            config.rotation = 270
+            plan = plan_toolpaths(project, config)
+            check(
+                plan.board.rotation == 270,
+                "an explicit 270 degree rotation is honoured",
+            )
+
+            config.rotation = 180
+            try:
+                plan_toolpaths(project, config)
+                check(False, "180 degrees should still be too wide")
+            except SlicerError:
+                check(True, "180 degrees leaves it 150 mm wide and is rejected")
+
+            config.rotation = 270
+            config.auto_rotate = True
+            plan = plan_toolpaths(project, config)
+            check(
+                plan.board.rotation == 270,
+                "an explicit rotation wins over auto-rotate",
+            )
         finally:
             project.cleanup()
+
+
+def test_copper_preview_shape(archive: Path) -> None:
+    print("\n== Copper preview geometry ==")
+    project = load_project(archive)
+    try:
+        config = SlicerConfig()
+        config.mill_bottom = True
+        plan = plan_toolpaths(project, config)
+        groups = plan.board.copper_polygons()
+        check(set(groups) <= {"top", "bottom"}, f"sides returned: {sorted(groups)}")
+        for side, polygons in groups.items():
+            check(isinstance(polygons, list), f"{side} returns a list of polygons")
+            if not polygons:
+                continue
+            first = polygons[0]
+            check(isinstance(first, list) and len(first) >= 1, f"{side} polygon has rings")
+            check(
+                all(len(ring) >= 4 and len(ring[0]) == 2 for ring in first),
+                f"{side} rings are closed coordinate lists",
+            )
+            check(
+                all(ring[0] == ring[-1] for ring in first),
+                f"{side} rings are explicitly closed",
+            )
+        total = sum(len(p) for p in groups.values())
+        check(total >= 1, f"{total} copper polygons available to the viewer")
+
+        preview = plan.board.copper_preview()
+        check(
+            set(preview) == set(groups),
+            "the flat ring preview and the polygon preview cover the same sides",
+        )
+    finally:
+        project.cleanup()
 
 
 def main() -> int:
@@ -1268,6 +1338,7 @@ def main() -> int:
     test_mcp_bridge()
     test_machine_envelope()
     test_rotation_and_pins()
+    test_copper_preview_shape(archive)
     test_clearance_and_feeds(archive)
     test_updater_versions()
 

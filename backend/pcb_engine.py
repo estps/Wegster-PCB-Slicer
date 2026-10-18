@@ -536,6 +536,40 @@ class BoardGeometry:
     def bounds(self) -> tuple[float, float, float, float]:
         return tuple(float(v) for v in self.outline.bounds)
 
+    def copper_polygons(
+        self, point_budget: int = 120_000
+    ) -> dict[str, list[list[list[list[float]]]]]:
+        preview: dict[str, list[list[list[list[float]]]]] = {}
+        for side, geom in self.copper.items():
+            tolerance = 0.02
+            groups: list[list[list[list[float]]]] = []
+            for _ in range(6):
+                simplified = shapely.simplify(geom, tolerance, preserve_topology=True)
+                groups = []
+                total = 0
+                for part in shapely.get_parts(simplified):
+                    if part.geom_type != "Polygon" or part.is_empty:
+                        continue
+                    encoded: list[list[list[float]]] = []
+                    for ring in (part.exterior, *part.interiors):
+                        coords = [
+                            [round(float(x), 4), round(float(y), 4)]
+                            for x, y in ring.coords
+                        ]
+                        if len(coords) < 4:
+                            continue
+                        encoded.append(coords)
+                        total += len(coords)
+                    if encoded:
+                        groups.append(encoded)
+                    if total > point_budget:
+                        break
+                if total <= point_budget:
+                    break
+                tolerance *= 3.0
+            preview[side] = groups
+        return preview
+
     def copper_preview(self, point_budget: int = 40_000) -> dict[str, list[list[list[float]]]]:
         preview: dict[str, list[list[list[float]]]] = {}
         for side, geom in self.copper.items():

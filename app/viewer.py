@@ -11,6 +11,7 @@ from PySide6.QtGui import (
     QFont,
     QImage,
     QPainter,
+    QPainterPath,
     QPen,
     QPixmap,
     QPolygonF,
@@ -65,7 +66,7 @@ class ToolpathView(QGraphicsView):
         self._machine = (140.0, 90.0)
         self._bed = QRectF(0.0, 0.0, 140.0, 90.0)
         self._outline: QPolygonF | None = None
-        self._copper: list[tuple[str, list[QPolygonF]]] = []
+        self._copper: list[tuple[str, list[QPainterPath]]] = []
         self._layers: list[PathLayer] = []
         self._holes: list[tuple[float, float, float]] = []
         self._show_copper = True
@@ -236,9 +237,24 @@ class ToolpathView(QGraphicsView):
         self._outline = to_polygon(outline_coords) if len(outline_coords) > 2 else None
 
         self._copper = []
-        for side, rings in board.copper_preview().items():
+        ordered = sorted(
+            board.copper_polygons().items(), key=lambda item: item[0] != "bottom"
+        )
+        for side, groups in ordered:
             colour = theme.COPPER_BOTTOM if side == "bottom" else theme.COPPER_TOP
-            self._copper.append((colour, [to_polygon(r) for r in rings if len(r) > 2]))
+            paths: list[QPainterPath] = []
+            for rings in groups:
+                path = QPainterPath()
+                path.setFillRule(Qt.FillRule.OddEvenFill)
+                for ring in rings:
+                    polygon = to_polygon(ring)
+                    if polygon.count() < 3:
+                        continue
+                    path.addPolygon(polygon)
+                    path.closeSubpath()
+                if not path.isEmpty():
+                    paths.append(path)
+            self._copper.append((colour, paths))
 
         self._layers = []
         self._holes = []
@@ -517,11 +533,11 @@ class ToolpathView(QGraphicsView):
 
     def _paint_plan(self, painter: QPainter) -> None:
         if self._show_copper:
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            for colour, rings in self._copper:
-                painter.setPen(QPen(theme.qcolor(colour, 190), 0.0))
-                for ring in rings:
-                    painter.drawPolyline(ring)
+            for colour, paths in self._copper:
+                painter.setPen(QPen(theme.qcolor(colour, 235), 0.0))
+                painter.setBrush(theme.qcolor(colour, 90))
+                for path in paths:
+                    painter.drawPath(path)
 
         if self._show_outline and self._outline is not None:
             painter.setPen(QPen(theme.qcolor(theme.OUTLINE), 0.0))

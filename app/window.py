@@ -657,6 +657,14 @@ class MainWindow(QMainWindow):
             lambda: self.config.auto_rotate,
             lambda v: setattr(self.config, "auto_rotate", v),
         )
+        self.rotate_button = QPushButton("Rotate 90°")
+        self.rotate_button.setToolTip(
+            "Turn the board 90 degrees clockwise. Turns auto-rotate off so the "
+            "angle sticks."
+        )
+        self.rotate_button.clicked.connect(self._rotate_board)
+        card.add(self.rotate_button)
+        self.rotation_stat = card.add_stat("Board rotation", "0°", theme.TEAL)
         self._bind_toggle(
             card, "Front copper (top)",
             lambda: self.config.mill_top,
@@ -1434,10 +1442,23 @@ class MainWindow(QMainWindow):
         self.tool_diameter_row.set_enabled(not is_vbit)
         for row in getattr(self, "_pin_rows", []):
             row.set_enabled(not self.config.alignment_pins_auto)
+        if hasattr(self, "rotation_stat"):
+            self.rotation_stat.set_value(f"{int(self.config.rotation)}°")
         self.subtitle.setText(
             f"{self.profile.name}   ·   {self.config.origin_mode.replace('_', '-')}"
         )
         self._update_side_hint()
+
+    def _rotate_board(self) -> None:
+        current = int(self.config.rotation)
+        if self.plan is not None:
+            current = int(self.plan.board.rotation)
+        self.config.rotation = (current + 90) % 360
+        self.config.auto_rotate = False
+        self._refresh_widgets()
+        self._schedule_autosave()
+        self.status_label.setText(f"Board rotated to {self.config.rotation}° — recomputing…")
+        self._debounce.start()
 
     def _update_derived(self) -> None:
         tool = self.config.isolation_tool
@@ -1688,6 +1709,8 @@ class MainWindow(QMainWindow):
         self.recompute_button.setEnabled(True)
         self._update_verify_card(report)
         self._refresh_widgets()
+        if hasattr(self, "rotation_stat"):
+            self.rotation_stat.set_value(f"{plan.board.rotation}°")
 
         if not self._gcode_mode:
             self.viewer.set_plan(

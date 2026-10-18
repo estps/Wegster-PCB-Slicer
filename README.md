@@ -52,8 +52,10 @@ the board.
   and drill files with **Add Files…**; each pick adds to the set.
 - **Auto-rotate to fit** — a board wider than the bed but shorter than its
   length is rotated 90° automatically (a 150 × 90 mm board becomes 90 × 150 on
-  the 140 × 200 mm bed). Alignment pins are nudged onto the bed to match, and
-  both moves are reported in the warnings.
+  the 140 × 200 mm bed). A **Rotate 90°** button cycles the angle by hand
+  (0/90/180/270) and switches auto-rotation off so your choice sticks.
+  Alignment pins are nudged onto the bed to match, and both moves are reported
+  in the warnings.
 
 ## Requirements
 

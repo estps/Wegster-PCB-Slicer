@@ -692,6 +692,21 @@ def _rotate_point(x: float, y: float, angle: int) -> tuple[float, float]:
     return (x, y)
 
 
+def apply_isolation_preset(config: SlicerConfig, has_bottom: bool) -> SlicerConfig:
+    config.isolation_enabled = True
+    config.isolation_passes = 1
+    config.isolation_depth = 0.05
+    config.isolation_stepover = 0.0
+    config.isolation_clearance = 0.0
+    config.rubout_enabled = False
+    config.drill_enabled = True
+    config.cutout_enabled = True
+    config.tab_enabled = True
+    config.mill_top = True
+    config.mill_bottom = bool(has_bottom)
+    return config
+
+
 def build_board(project: PcbProject, config: SlicerConfig) -> BoardGeometry:
     warnings: list[str] = []
     try:

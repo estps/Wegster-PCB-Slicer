@@ -26,7 +26,13 @@ from PySide6.QtWidgets import (
 from exporter import ExportPackage, verify_plan, write_package
 from gcode_reader import read_file as read_gcode_file
 from gerber_io import LayerType, PcbProject, load_files, load_project
-from pcb_engine import SlicerConfig, SlicerError, ToolSpec, plan_toolpaths
+from pcb_engine import (
+    SlicerConfig,
+    SlicerError,
+    ToolSpec,
+    apply_isolation_preset,
+    plan_toolpaths,
+)
 from tool_db import (
     DbTool,
     ToolDatabase,
@@ -107,6 +113,7 @@ class MainWindow(QMainWindow):
         self.project: PcbProject | None = None
         self.archive: Path | None = None
         self.file_paths: list[Path] = []
+        self._pending_export = False
         self.plan = None
         self.verification = None
         self.package: ExportPackage | None = None
@@ -1788,6 +1795,10 @@ class MainWindow(QMainWindow):
             self.rotation_stat.set_value(f"{plan.board.rotation}°")
         self._update_origin_marker()
 
+        if getattr(self, "_pending_export", False):
+            self._pending_export = False
+            self._export()
+
         if not self._gcode_mode:
             self.viewer.set_plan(
                 plan, (self.profile.work_x, self.profile.work_y)
@@ -1852,17 +1863,11 @@ class MainWindow(QMainWindow):
 
 
     def _apply_isolation_preset(self) -> None:
-        self.config.isolation_enabled = True
-        self.config.isolation_passes = 1
-        self.config.isolation_depth = 0.05
-        self.config.isolation_stepover = 0.0
-        self.config.isolation_clearance = 0.0
-        self.config.rubout_enabled = False
-        self.config.drill_enabled = True
-        self.config.cutout_enabled = True
-        self.config.tab_enabled = True
-        self.config.mill_top = True
-        self.config.mill_bottom = False
+        has_bottom = (
+            self.project is not None
+            and self.project.layer(LayerType.BOTTOM_COPPER) is not None
+        )
+        apply_isolation_preset(self.config, has_bottom)
         self._refresh_widgets()
         self._request_plan()
 
@@ -1874,9 +1879,8 @@ class MainWindow(QMainWindow):
         self._request_plan()
 
     def _one_click(self) -> None:
+        self._pending_export = True
         self._apply_isolation_preset()
-        if self.plan is not None:
-            self._export()
 
 
     def _export(self) -> None:

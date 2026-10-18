@@ -1542,6 +1542,28 @@ def test_double_sided_layout() -> None:
             project.cleanup()
 
 
+def test_isolation_preset() -> None:
+    print("\n== One-click isolation preset ==")
+    from pcb_engine import apply_isolation_preset
+
+    config = SlicerConfig()
+    config.mill_bottom = True
+    apply_isolation_preset(config, has_bottom=False)
+    check(config.mill_top, "the preset always mills the front")
+    check(
+        not config.mill_bottom,
+        "a board without back copper produces a single-sided preset",
+    )
+    check(config.isolation_passes == 1, "the preset uses one isolation pass")
+    check(not config.rubout_enabled, "the preset leaves rub-out off")
+
+    apply_isolation_preset(config, has_bottom=True)
+    check(
+        config.mill_bottom,
+        "a board with back copper produces a two-sided preset",
+    )
+
+
 def main() -> int:
     import tempfile
 
@@ -1575,6 +1597,7 @@ def main() -> int:
     test_pin_origin()
     test_custom_origin(archive)
     test_double_sided_layout()
+    test_isolation_preset()
     test_clearance_and_feeds(archive)
     test_updater_versions()
 

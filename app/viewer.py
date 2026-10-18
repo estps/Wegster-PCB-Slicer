@@ -41,6 +41,7 @@ class PathLayer:
 class ToolpathView(QGraphicsView):
 
     cursorMoved = Signal(float, float)
+    pointPicked = Signal(float, float)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -102,6 +103,8 @@ class ToolpathView(QGraphicsView):
         self._pan_origin = QPointF()
         self._cursor = QPointF()
         self._has_cursor = False
+        self._pick_mode = False
+        self._origin_marker: tuple[float, float] | None = None
 
         self._min_scale = 0.05
         self._max_scale = 400.0
@@ -385,7 +388,30 @@ class ToolpathView(QGraphicsView):
             self.zoom_by(1.0018 ** delta)
         event.accept()
 
+    def set_pick_mode(self, enabled: bool) -> None:
+        self._pick_mode = bool(enabled)
+        self.setCursor(
+            Qt.CursorShape.CrossCursor
+            if enabled
+            else Qt.CursorShape.OpenHandCursor
+        )
+
+    def set_origin_marker(self, point: tuple[float, float] | None) -> None:
+        self._origin_marker = point
+        self.viewport().update()
+
     def mousePressEvent(self, event) -> None:
+        if (
+            self._pick_mode
+            and event.button() == Qt.MouseButton.LeftButton
+            and self.scene() is not None
+        ):
+            scene_point = self.mapToScene(event.position().toPoint())
+            self.pointPicked.emit(
+                scene_point.x(), self._machine[1] - scene_point.y()
+            )
+            event.accept()
+            return
         if event.button() == Qt.MouseButton.LeftButton:
             self._panning = True
             self._pan_origin = event.position()
@@ -563,8 +589,23 @@ class ToolpathView(QGraphicsView):
         painter = QPainter(self.viewport())
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         self._paint_legend(painter)
+        self._paint_origin(painter)
         self._paint_cursor(painter)
         painter.end()
+
+    def _paint_origin(self, painter: QPainter) -> None:
+        if self._origin_marker is None or self.scene() is None:
+            return
+        x, y = self._origin_marker
+        point = self.mapFromScene(QPointF(x, self._machine[1] - y))
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(QPen(theme.qcolor(theme.YELLOW, 230), 1.6))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawLine(point.x() - 11, point.y(), point.x() + 11, point.y())
+        painter.drawLine(point.x(), point.y() - 11, point.x(), point.y() + 11)
+        painter.drawEllipse(point, 5, 5)
+        painter.setPen(QPen(theme.qcolor(theme.YELLOW, 230), 1.0))
+        painter.drawText(point.x() + 9, point.y() - 9, "0,0")
 
     def _paint_legend(self, painter: QPainter) -> None:
         if not self.show_legend:

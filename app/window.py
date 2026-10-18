@@ -8,6 +8,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -639,6 +640,7 @@ class MainWindow(QMainWindow):
         self.origin_combo.addItem("Lower-left corner", "lower_left")
         self.origin_combo.addItem("Board centre", "center")
         self.origin_combo.addItem("Top-left alignment pin (+Y down)", "pin_top_left")
+        self.origin_combo.addItem("Picked point", "custom")
         self.origin_combo.currentIndexChanged.connect(
             lambda _: self._apply(
                 lambda v: setattr(self.config, "origin_mode", v),
@@ -646,6 +648,24 @@ class MainWindow(QMainWindow):
             )
         )
         card.add_row("Work origin", self.origin_combo)
+
+        pick_row = QWidget()
+        pick_layout = QHBoxLayout(pick_row)
+        pick_layout.setContentsMargins(0, 0, 0, 0)
+        pick_layout.setSpacing(6)
+        self.pick_origin_button = QPushButton("Set origin…")
+        self.pick_origin_button.setCheckable(True)
+        self.pick_origin_button.setToolTip("Click the canvas to place the work origin")
+        self.pick_origin_button.toggled.connect(self._toggle_pick_origin)
+        pick_layout.addWidget(self.pick_origin_button)
+        self.snap_toggle = QCheckBox("Snap")
+        self.snap_toggle.setChecked(True)
+        self.snap_toggle.setToolTip(
+            "Snap the picked point to board corners, bed corners, pins and holes"
+        )
+        pick_layout.addWidget(self.snap_toggle)
+        card.add_row("Pick on canvas", pick_row)
+        self.viewer.pointPicked.connect(self._on_point_picked)
 
         self._bind_slider(
             card, "Margin", 0.0, 20.0,
@@ -759,7 +779,7 @@ class MainWindow(QMainWindow):
             card, "Included angle", 10.0, 90.0,
             lambda: self.config.isolation_tool.angle,
             lambda v: setattr(self.config.isolation_tool, "angle", v),
-            0, "°",
+            1, "°",
         )
         self.tip_row = self._bind_slider(
             card, "Tip flat", 0.0, 0.5,
@@ -1239,19 +1259,19 @@ class MainWindow(QMainWindow):
             card, "Cut feed", 20.0, 1200.0,
             lambda: self.profile.cut_feed,
             lambda v: setattr(self.profile, "cut_feed", v),
-            0, " mm/min",
+            1, " mm/min",
         )
         self._bind_slider(
             card, "Plunge feed", 10.0, 600.0,
             lambda: self.profile.plunge_feed,
             lambda v: setattr(self.profile, "plunge_feed", v),
-            0, " mm/min",
+            1, " mm/min",
         )
         self._bind_slider(
             card, "Drill feed", 5.0, 400.0,
             lambda: self.profile.drill_feed,
             lambda v: setattr(self.profile, "drill_feed", v),
-            0, " mm/min",
+            1, " mm/min",
         )
         self._bind_slider(
             card, "Spindle", 10000, 15000,
@@ -1449,6 +1469,60 @@ class MainWindow(QMainWindow):
             f"{self.profile.name}   ·   {self.config.origin_mode.replace('_', '-')}"
         )
         self._update_side_hint()
+
+    def _toggle_pick_origin(self, enabled: bool) -> None:
+        self.viewer.set_pick_mode(bool(enabled))
+        if enabled:
+            self.status_label.setText("Click the canvas to set the work origin.")
+
+    def _on_point_picked(self, x: float, y: float) -> None:
+        if getattr(self, "snap_toggle", None) is not None and self.snap_toggle.isChecked():
+            x, y = self._snap_point(x, y)
+        self.config.origin_mode = "custom"
+        self.config.origin_custom_x = round(float(x), 2)
+        self.config.origin_custom_y = round(float(y), 2)
+        if getattr(self, "pick_origin_button", None) is not None:
+            self.pick_origin_button.setChecked(False)
+        self.viewer.set_pick_mode(False)
+        self._update_origin_marker()
+        self._refresh_widgets()
+        self._schedule_autosave()
+        self.status_label.setText(
+            f"Origin set to ({self.config.origin_custom_x:.2f}, "
+            f"{self.config.origin_custom_y:.2f}) mm — recomputing…"
+        )
+        self._debounce.start()
+
+    def _snap_point(self, x: float, y: float) -> tuple[float, float]:
+        radius = 6.0
+        candidates: list[tuple[float, float]] = [
+            (0.0, 0.0),
+            (self.profile.work_x, 0.0),
+            (0.0, self.profile.work_y),
+            (self.profile.work_x, self.profile.work_y),
+        ]
+        board = self.plan.board if self.plan is not None else None
+        if board is not None:
+            minx, miny, maxx, maxy = board.outline.bounds
+            candidates += [(minx, miny), (maxx, miny), (minx, maxy), (maxx, maxy)]
+            candidates += [(hole.x, hole.y) for hole in board.holes]
+            if board.pins:
+                candidates += [(float(px), float(py)) for px, py in board.pins]
+        best = (x, y)
+        best_distance = radius
+        for cx, cy in candidates:
+            distance = math.hypot(cx - x, cy - y)
+            if distance < best_distance:
+                best_distance = distance
+                best = (cx, cy)
+        return best
+
+    def _update_origin_marker(self) -> None:
+        from wegstr_gcode import work_origin
+
+        board = self.plan.board if self.plan is not None else None
+        origin_x, origin_y, _y_down = work_origin(self.config, board)
+        self.viewer.set_origin_marker((origin_x, origin_y))
 
     def _rotate_board(self) -> None:
         current = int(self.config.rotation)
@@ -1712,6 +1786,7 @@ class MainWindow(QMainWindow):
         self._refresh_widgets()
         if hasattr(self, "rotation_stat"):
             self.rotation_stat.set_value(f"{plan.board.rotation}°")
+        self._update_origin_marker()
 
         if not self._gcode_mode:
             self.viewer.set_plan(

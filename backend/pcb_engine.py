@@ -117,6 +117,8 @@ class SlicerConfig:
     machine_y: float = 200.0
     machine_z: float = 40.0
     origin_mode: str = "lower_left"
+    origin_custom_x: float = 0.0
+    origin_custom_y: float = 0.0
     margin: float = 2.0
     enforce_envelope: bool = True
     auto_rotate: bool = True
@@ -198,7 +200,7 @@ class SlicerConfig:
         problems: list[str] = []
         if self.machine_x <= 0 or self.machine_y <= 0 or self.machine_z <= 0:
             problems.append("Machine envelope must be positive.")
-        if self.origin_mode not in ("lower_left", "center", "pin_top_left"):
+        if self.origin_mode not in ("lower_left", "center", "pin_top_left", "custom"):
             problems.append(f"Unknown origin mode {self.origin_mode!r}.")
         if self.isolation_enabled and self.isolation_passes < 1:
             problems.append("Isolation passes must be at least 1.")

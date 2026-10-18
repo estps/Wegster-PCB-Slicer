@@ -392,6 +392,8 @@ def _margin_text(board: object | None, config: SlicerConfig) -> str:
 def work_origin(
     config: SlicerConfig, board: object | None
 ) -> tuple[float, float, bool]:
+    if config.origin_mode == "custom":
+        return (float(config.origin_custom_x), float(config.origin_custom_y), False)
     if config.origin_mode != "pin_top_left" or board is None:
         return (0.0, 0.0, False)
     pins = getattr(board, "pins", None)

@@ -1401,6 +1401,67 @@ def test_pin_origin() -> None:
             project.cleanup()
 
 
+def test_custom_origin(archive: Path) -> None:
+    print("\n== Picked work origin ==")
+    from wegstr_gcode import WEGSTR_LIGHT, emit_plan, work_envelope, work_origin
+
+    project = load_project(archive)
+    try:
+        config = SlicerConfig()
+        config.mill_bottom = False
+        config.alignment_holes = False
+        plan = plan_toolpaths(project, config)
+        minx, miny, maxx, maxy = plan.board.outline.bounds
+
+        config.origin_mode = "custom"
+        config.origin_custom_x = minx
+        config.origin_custom_y = maxy
+        config.rotation = 0
+        plan = plan_toolpaths(project, config)
+
+        origin_x, origin_y, y_down = work_origin(config, plan.board)
+        check(
+            abs(origin_x - minx) < 1e-6 and abs(origin_y - maxy) < 1e-6,
+            f"origin sits on the picked point ({origin_x:.2f}, {origin_y:.2f})",
+        )
+        check(not y_down, "a picked origin keeps +Y up")
+
+        low_x, high_x, low_y, high_y = work_envelope(config, WEGSTR_LIGHT, plan.board)
+        check(
+            abs((high_x - low_x) - WEGSTR_LIGHT.work_x) < 1e-6
+            and abs((high_y - low_y) - WEGSTR_LIGHT.work_y) < 1e-6,
+            "the envelope keeps the full bed size",
+        )
+        check(
+            low_x <= 0.0 <= high_x and low_y <= 0.0 <= high_y,
+            "zero stays inside the shifted envelope",
+        )
+
+        program = emit_plan(plan, config, program_name="custom-origin")
+        xs: list[float] = []
+        ys: list[float] = []
+        for line in program.splitlines():
+            for token in line.split():
+                try:
+                    if token.startswith("X"):
+                        xs.append(float(token[1:]))
+                    elif token.startswith("Y"):
+                        ys.append(float(token[1:]))
+                except ValueError:
+                    continue
+        check(min(xs) >= -0.001, f"X starts at zero (min {min(xs):.2f})")
+        check(max(ys) <= 0.001, f"Y runs down from the origin (max {max(ys):.2f})")
+        check(
+            len(xs) > 0 and max(xs) - min(xs) > 1.0,
+            f"the program spans {max(xs) - min(xs):.1f} mm in X",
+        )
+
+        report = verify_plan(plan, config, WEGSTR_LIGHT)
+        check(report.ok, "a picked-corner origin verifies clean")
+    finally:
+        project.cleanup()
+
+
 def main() -> int:
     import tempfile
 
@@ -1432,6 +1493,7 @@ def main() -> int:
     test_rotation_and_pins()
     test_copper_preview_shape(archive)
     test_pin_origin()
+    test_custom_origin(archive)
     test_clearance_and_feeds(archive)
     test_updater_versions()
 

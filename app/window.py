@@ -470,7 +470,6 @@ class MainWindow(QMainWindow):
         self._build_help_card(layout)
         self._build_job_card(layout)
         self._build_tool_card(layout)
-        self._build_mcp_card(layout)
         self._build_isolation_card(layout)
         self._build_rubout_card(layout)
         self._build_cutout_card(layout)
@@ -889,64 +888,6 @@ class MainWindow(QMainWindow):
             lambda v: setattr(self.config.silkscreen_tool, "diameter", v),
             2, " mm",
         )
-
-    def _build_mcp_card(self, layout: QVBoxLayout) -> None:
-        card = Card("AI / MCP", theme.MAUVE)
-        layout.addWidget(card)
-
-        note = card.add_label("", "Hint")
-        note.setWordWrap(True)
-        note.setText(
-            "This app is also an MCP server. Point Claude Code at it and the "
-            "assistant can load boards, pick tools, plan, export, read and "
-            "write files, and change the app itself."
-        )
-
-        self.mcp_status = card.add_label("", "Hint")
-        self.mcp_status.setWordWrap(True)
-        self.mcp_status.setStyleSheet(f"color: {theme.OVERLAY};")
-
-        prompt_button = QPushButton("Copy Claude Code prompt")
-        prompt_button.clicked.connect(self._copy_mcp_prompt)
-        card.add(prompt_button)
-
-        config_button = QPushButton("Copy .mcp.json")
-        config_button.clicked.connect(self._copy_mcp_config)
-        card.add(config_button)
-
-        self._refresh_mcp_status()
-
-    def _refresh_mcp_status(self) -> None:
-        label = getattr(self, "mcp_status", None)
-        if label is None:
-            return
-        try:
-            from mcp_server import claude_config
-
-            server = claude_config()["mcpServers"]["wegstr"]
-            label.setText(f"{server['command']} {' '.join(server['args'])}")
-        except Exception as exc:
-            label.setText(f"MCP server unavailable: {exc}")
-
-    def _copy_mcp_prompt(self) -> None:
-        try:
-            from mcp_server import setup_prompt
-
-            QGuiApplication.clipboard().setText(setup_prompt())
-            self.status_label.setText("Copied the Claude Code setup prompt.")
-        except Exception as exc:
-            self.status_label.setText(f"Could not build the prompt: {exc}")
-
-    def _copy_mcp_config(self) -> None:
-        try:
-            import json
-
-            from mcp_server import claude_config
-
-            QGuiApplication.clipboard().setText(json.dumps(claude_config(), indent=2))
-            self.status_label.setText("Copied the .mcp.json snippet.")
-        except Exception as exc:
-            self.status_label.setText(f"Could not build the config: {exc}")
 
     def _load_tool_db(self) -> None:
         try:
@@ -1473,7 +1414,6 @@ class MainWindow(QMainWindow):
 
     def _refresh_inline_theme(self) -> None:
         self.sides_hint.setStyleSheet(f"color: {theme.YELLOW};")
-        self.mcp_status.setStyleSheet(f"color: {theme.OVERLAY};")
         self.verify_issues.setStyleSheet(f"color: {theme.YELLOW};")
         self._update_tool_db_label()
 

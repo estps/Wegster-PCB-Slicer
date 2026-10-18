@@ -44,10 +44,6 @@ the board.
 - **Finds itself in Windows** — on first launch it adds a Start-menu shortcut
   (per-user, no admin needed) so you can type "Wegstr" into the search bar and
   hit it. Done once; remove it with `python tools\install_start_menu.py --remove`.
-- **MCP server** — the app doubles as a Model Context Protocol server, so an AI
-  client such as Claude Code can load boards, pick tools, plan, export, read and
-  write files, and change the app itself. See **AI / MCP** in the app, or run
-  `Wegstr PCB Slicer.exe --mcp`.
 - **Add files one by one** — besides a `.zip`, you can hand it individual Gerber
   and drill files with **Add Files…**; each pick adds to the set.
 - **Auto-rotate to fit** — a board wider than the bed but shorter than its
@@ -77,27 +73,6 @@ Then: **Open Gerber…** → pick your `.zip` → check the preview → **Export
 
 Or use **Add Files…** to load the Gerber and drill files individually; each
 pick is added to the set, so you can build a job one file at a time.
-
-## AI / MCP
-
-The app is also an MCP server. Register it with Claude Code:
-
-```bash
-claude mcp add wegstr -s user -- "C:\path\to\Wegstr PCB Slicer.exe" --mcp
-```
-
-There are **Copy Claude Code prompt** and **Copy .mcp.json** buttons in the
-**AI / MCP** panel. The server exposes 18 tools, including `open_archive`,
-`add_files`, `list_layers`, `recommend_tools`, `plan`, `export`, filesystem
-access, and a `python` tool that can run anything inside the app. The skill in
-`skills\wegstr-pcb-slicer\SKILL.md` documents the workflow for the assistant.
-
-Run it by hand with:
-
-```bash
-python backend/mcp_server.py --print-config
-python backend/mcp_server.py --print-prompt
-```
 
 The tool database is found automatically in `Documents\Cut2D_tools_database.vtdb`.
 Point at a different one by setting `WEGSTR_TOOL_DB`:
@@ -158,7 +133,6 @@ backend/          pure Python, no UI dependency
   gcode_verify.py   independent verifier (re-reads the emitted file)
   gcode_reader.py   independent parser for the viewer
   updater.py        GitHub release check
-  mcp_server.py     MCP server: tools, resources, prompts, python bridge
   sample_gerber.py  generates a sample board for tests and the self-test
   main.py           CLI + JSON IPC server
 
@@ -168,8 +142,6 @@ app/              PySide6 desktop UI
   shortcuts.py      first-run Start-menu registration
   theme.py          dark design system
   settings.py       persistent preferences
-
-skills/           assistant skills (wegstr-pcb-slicer)
 ```
 
 The verifier and the reader parse independently of the emitter on purpose — a

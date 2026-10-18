@@ -15,7 +15,6 @@ hidden = [
     "tool_db",
     "sqlite_read",
     "updater",
-    "mcp_server",
     "sample_gerber",
 ]
 

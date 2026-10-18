@@ -143,17 +143,6 @@ def self_test(argv: list[str]) -> int:
 
 
 def main() -> int:
-    if "--mcp" in sys.argv:
-        try:
-            from app import BACKEND_DIR
-
-            del BACKEND_DIR
-        except Exception:
-            pass
-        from mcp_server import main as run_mcp
-
-        return run_mcp([a for a in sys.argv[1:] if a != "--mcp"])
-
     if "--reset-preferences" in sys.argv:
         from app.settings import Preferences, settings_path
 

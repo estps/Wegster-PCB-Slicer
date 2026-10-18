@@ -1012,72 +1012,6 @@ def test_file_by_file() -> None:
             override.cleanup()
 
 
-def test_mcp_bridge() -> None:
-    print("\n== MCP server ==")
-    import json
-    import tempfile
-
-    from sample_gerber import write_sample_gerber
-
-    with tempfile.TemporaryDirectory(prefix="wegstr_mcp_") as tmp:
-        root = Path(tmp)
-        archive = write_sample_gerber(root / "gerber")
-        out_dir = root / "out"
-
-        requests = [
-            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}},
-            {"jsonrpc": "2.0", "method": "notifications/initialized"},
-            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
-            {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "open_archive", "arguments": {"path": str(archive)}}},
-            {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "plan", "arguments": {}}},
-            {"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "export", "arguments": {"out_dir": str(out_dir)}}},
-            {"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "python", "arguments": {"code": "print('ok'); state.describe()"}}},
-            {"jsonrpc": "2.0", "id": 7, "method": "resources/read", "params": {"uri": "wegstr://skill"}},
-            {"jsonrpc": "2.0", "id": 8, "method": "tools/call", "params": {"name": "add_files", "arguments": {"paths": [str(root / "gerber" / "Sample_TopLayer.GTL"), str(root / "gerber" / "Sample_BoardOutlineLayer.GKO")], "roles": {}}}},
-        ]
-        payload = "\n".join(json.dumps(r) for r in requests) + "\n"
-        proc = subprocess.run(
-            [sys.executable, str(HERE / "mcp_server.py")],
-            input=payload,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=600,
-        )
-        check(proc.returncode == 0, "MCP server exited cleanly")
-        replies = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
-        check(len(replies) == len(requests) - 1, f"one reply per request ({len(replies)})")
-        by_id = {r["id"]: r for r in replies if "id" in r}
-
-        init = by_id[1]["result"]
-        check(init["serverInfo"]["name"] == "wegstr-pcb-slicer", "server identifies itself")
-        check(init["protocolVersion"] == "2025-06-18", "protocol version echoed")
-
-        tools = {t["name"] for t in by_id[2]["result"]["tools"]}
-        for expected in ("open_archive", "add_files", "plan", "export", "python", "list_tools"):
-            check(expected in tools, f"tool {expected!r} exposed")
-        check(len(tools) >= 15, f"{len(tools)} tools exposed")
-
-        def payload_of(request_id):
-            return json.loads(by_id[request_id]["result"]["content"][0]["text"])
-
-        project = payload_of(3)
-        check(len(project["layers"]) >= 4, "open_archive returns layers over MCP")
-        plan = payload_of(4)
-        check(len(plan["groups"]) >= 2, "plan returns operations over MCP")
-        export = payload_of(5)
-        check(bool(export["files"]), f"export wrote {len(export['files'])} file(s)")
-        check(out_dir.exists(), "export directory exists")
-
-        python = payload_of(6)
-        check(python["stdout"].strip() == "ok", "python tool runs code")
-        check(isinstance(python.get("result"), str) and "layers" in python["result"], "python tool returns the live state")
-
-        skill = by_id[7]["result"]["contents"][0]["text"]
-        check("Wegstr" in skill and len(skill) > 300, "skill resource is served")
-        check(payload_of(8)["layers"], "add_files accepts a role map")
-
-
 def test_machine_envelope() -> None:
     print("\n== Machine work area ==")
     import tempfile
@@ -1710,7 +1644,6 @@ def main() -> int:
     test_tool_db()
     test_start_menu_shortcut()
     test_file_by_file()
-    test_mcp_bridge()
     test_machine_envelope()
     test_rotation_and_pins()
     test_copper_preview_shape(archive)

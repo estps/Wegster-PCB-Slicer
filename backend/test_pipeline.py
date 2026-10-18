@@ -748,6 +748,17 @@ def test_tool_db() -> None:
             f"recommended tool cuts {tool.cut_width(0.05):.3f} mm, inside the clearance",
         )
 
+    roomy = recommend_tools(database, isolation_depth=0.05, min_gap=0.40)
+    chosen = database.by_key(roomy["keys"]["isolation"])
+    check(
+        chosen is not None and chosen.cut_width(0.05) <= 0.40 * 0.6 + 1e-9,
+        f"a 0.40 mm gap leaves margin ({chosen.cut_width(0.05):.3f} mm cut)",
+    )
+    check(
+        chosen is not None and chosen.kind == "vbit",
+        f"a tight board falls back to a V-bit ({chosen.name})",
+    )
+
     config = SlicerConfig()
     chosen = database.by_key(fallback["keys"]["isolation"])
     apply_role(config, "isolation", chosen)

@@ -894,7 +894,9 @@ def generate_isolation(
     stepover = config.isolation_stepover or 0.8 * cut_width
     stepover = max(stepover, 1e-3)
 
-    reach = radius + config.isolation_clearance + stepover * max(config.isolation_passes - 1, 0)
+    reach = radius + config.isolation_clearance + stepover * max(
+        int(config.isolation_offsets) - 1, 0
+    )
     clip = _buffer(board, reach + cut_width, config.quad_segs, join_style="mitre")
 
     polylines: list[Polyline] = []

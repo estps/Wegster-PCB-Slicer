@@ -461,7 +461,7 @@ def recommend_tools(
             else "Default 0.2 mm end mill (board clearance unknown)."
         )
     else:
-        limit = max(min_gap * 0.9, 0.01)
+        limit = max(min_gap * 0.6, 0.01)
         flat_fit = _fit_within(flats, limit, isolation_depth)
         if flat_fit is not None:
             isolation = flat_fit

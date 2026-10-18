@@ -245,10 +245,12 @@ class ToolpathView(QGraphicsView):
         )
         for side, groups in ordered:
             colour = theme.COPPER_BOTTOM if side == "bottom" else theme.COPPER_TOP
+            if side == "bottom":
+                colour = QColor(colour).darker(145).name()
             paths: list[QPainterPath] = []
             for rings in groups:
                 path = QPainterPath()
-                path.setFillRule(Qt.FillRule.OddEvenFill)
+                path.setFillRule(Qt.FillRule.WindingFill)
                 for ring in rings:
                     polygon = to_polygon(ring)
                     if polygon.count() < 3:
@@ -560,8 +562,10 @@ class ToolpathView(QGraphicsView):
     def _paint_plan(self, painter: QPainter) -> None:
         if self._show_copper:
             for colour, paths in self._copper:
-                painter.setPen(QPen(theme.qcolor(colour, 235), 0.0))
-                painter.setBrush(theme.qcolor(colour, 90))
+                fill = theme.qcolor(colour)
+                fill.setAlpha(238)
+                painter.setPen(QPen(theme.qcolor(colour, 255), 0.0))
+                painter.setBrush(fill)
                 for path in paths:
                     painter.drawPath(path)
 

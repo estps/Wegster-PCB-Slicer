@@ -16,6 +16,7 @@ from shapely.geometry import (
     Polygon,
 )
 from shapely.geometry.base import BaseGeometry
+from shapely.geometry.polygon import orient
 
 from gerber_io import DrillHole, LayerType, PcbProject
 
@@ -546,7 +547,7 @@ class BoardGeometry:
     ) -> dict[str, list[list[list[list[float]]]]]:
         preview: dict[str, list[list[list[list[float]]]]] = {}
         for side, geom in self.copper.items():
-            tolerance = 0.02
+            tolerance = 0.01
             groups: list[list[list[list[float]]]] = []
             for _ in range(6):
                 simplified = shapely.simplify(geom, tolerance, preserve_topology=True)
@@ -555,18 +556,23 @@ class BoardGeometry:
                 for part in shapely.get_parts(simplified):
                     if part.geom_type != "Polygon" or part.is_empty:
                         continue
-                    encoded: list[list[list[float]]] = []
-                    for ring in (part.exterior, *part.interiors):
-                        coords = [
+                    part = orient(part, 1.0)
+                    outer = [
+                        [round(float(x), 4), round(float(y), 4)]
+                        for x, y in part.exterior.coords
+                    ]
+                    if len(outer) < 4:
+                        continue
+                    encoded = [outer]
+                    for interior in part.interiors:
+                        ring = [
                             [round(float(x), 4), round(float(y), 4)]
-                            for x, y in ring.coords
+                            for x, y in interior.coords
                         ]
-                        if len(coords) < 4:
-                            continue
-                        encoded.append(coords)
-                        total += len(coords)
-                    if encoded:
-                        groups.append(encoded)
+                        if len(ring) >= 4:
+                            encoded.append(ring)
+                    groups.append(encoded)
+                    total += sum(len(ring) for ring in encoded)
                     if total > point_budget:
                         break
                 if total <= point_budget:

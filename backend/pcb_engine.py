@@ -1061,8 +1061,15 @@ def generate_silkscreen_cutout(
                     pad_rings.append(polyline)
             current = _buffer(current, -stepover, config.quad_segs)
 
+        pad_rings.reverse()
         stitched = _stitch_rings(pad_rings, "silkscreen")
         if stitched is not None:
+            centre = polygon.representative_point()
+            start = np.asarray([[centre.x, centre.y]], dtype=float)
+            if len(stitched.points) and not np.allclose(stitched.points[0], start[0]):
+                stitched = Polyline(
+                    np.vstack([start, stitched.points]), False, "silkscreen"
+                )
             polylines.append(stitched)
 
     return polylines

@@ -29,6 +29,7 @@ _KEY_PANEL_HIDDEN = "view/panel_hidden"
 _KEY_ARCHIVE = "job/last_archive"
 _KEY_FILES = "job/last_files"
 _KEY_SHORTCUT = "install/start_menu_target"
+_KEY_SHORTCUT_VERSION = "install/start_menu_version"
 
 
 def _settings() -> QSettings:
@@ -234,6 +235,19 @@ class Preferences:
             return str(self.settings.value(_KEY_SHORTCUT, "") or "")
         except Exception:
             return ""
+
+    def shortcut_version(self) -> str:
+        try:
+            return str(self.settings.value(_KEY_SHORTCUT_VERSION, "") or "")
+        except Exception:
+            return ""
+
+    def set_shortcut_version(self, value: str) -> None:
+        try:
+            self.settings.setValue(_KEY_SHORTCUT_VERSION, str(value))
+            self.settings.sync()
+        except Exception:
+            pass
 
     def set_shortcut_target(self, value: str) -> None:
         try:

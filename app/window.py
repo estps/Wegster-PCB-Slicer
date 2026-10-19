@@ -1695,21 +1695,39 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._show_update_banner)
 
     def _register_in_start_menu(self) -> None:
-        from .shortcuts import is_current, target_key
+        from .shortcuts import is_current, shortcut_path, target_key
+        from updater import current_version, parse_version
 
         key = target_key()
         if not key:
             return
-        if is_current(recorded=self.preferences.shortcut_target()):
+
+        link = shortcut_path()
+        link_exists = link is not None and link.exists()
+        recorded_target = self.preferences.shortcut_target()
+        recorded_version = self.preferences.shortcut_version()
+        running = current_version()
+
+        if link_exists and recorded_version:
+            if parse_version(running) < parse_version(recorded_version):
+                return
+            if is_current(recorded=recorded_target) and parse_version(
+                running
+            ) <= parse_version(recorded_version):
+                return
+        elif is_current(recorded=recorded_target):
             return
+
         try:
             installed = install_shortcut()
         except Exception:
             installed = None
         if installed is not None:
             self.preferences.set_shortcut_target(key)
+            self.preferences.set_shortcut_version(running)
             self.status_label.setText(
-                "Added to the Start menu - search for 'Wegstr' to launch it."
+                "Start menu now opens version "
+                f"{running} - search for 'Wegstr' to launch it."
             )
 
     def _show_update_banner(self) -> None:

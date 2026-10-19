@@ -1659,6 +1659,83 @@ def test_silkscreen_stitching(archive: Path) -> None:
         project.cleanup()
 
 
+def test_silkscreen_direction(archive: Path) -> None:
+    print("\n== Silkscreen direction in the emitted G-code ==")
+    import math
+    import re
+
+    from wegstr_gcode import emit_program
+
+    project = load_project(archive)
+    try:
+        config = SlicerConfig()
+        config.mill_bottom = False
+        config.alignment_holes = False
+        config.silkscreen_enabled = True
+        config.silkscreen_bottom = False
+        config.silkscreen_mode = "cutout"
+        config.silkscreen_inside_out = True
+        plan = plan_toolpaths(project, config)
+        group = next(g for g in plan.groups if g.kind == "silkscreen")
+        text = emit_program([group], config, WEGSTR_LIGHT, "silk-direction")
+
+        word = re.compile(r"([XYZF])(-?[\d.]+)")
+        motion = None
+        x = y = z = 0.0
+        runs: list[tuple[tuple[float, float], list[tuple[float, float]]]] = []
+        current = None
+
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("(") or stripped == "%":
+                continue
+            head = stripped.split(" ")[0]
+            if head in ("G0", "G1"):
+                motion = head
+                rest = stripped[len(head):]
+            elif head.startswith("G") or head.startswith("M"):
+                rest = ""
+            else:
+                rest = stripped
+            values = {name: float(value) for name, value in word.findall(rest)}
+            nx = values.get("X", x)
+            ny = values.get("Y", y)
+            nz = values.get("Z", z)
+            cutting = motion == "G1" and nz < -0.001
+            moved = (nx != x) or (ny != y)
+            if cutting and moved:
+                if current is None:
+                    current = ((x, y), [])
+                current[1].append((nx, ny))
+            elif current is not None and (not cutting or not moved):
+                if current[1]:
+                    runs.append(current)
+                current = None
+            x, y, z = nx, ny, nz
+        if current and current[1]:
+            runs.append(current)
+
+        check(len(runs) > 5, f"{len(runs)} separate silkscreen cuts found")
+        inside = 0
+        for start, points in runs:
+            cx, cy = start
+            first = math.hypot(points[0][0] - cx, points[0][1] - cy)
+            last = math.hypot(points[-1][0] - cx, points[-1][1] - cy)
+            if last > first:
+                inside += 1
+        check(
+            inside == len(runs),
+            f"every cut run ends further from its start than it begins "
+            f"({inside}/{len(runs)}) inside-out",
+        )
+        check(
+            abs(config.silkscreen_depth) > 0,
+            "silkscreen depth stays positive",
+        )
+    finally:
+        project.cleanup()
+
+
 def main() -> int:
     import tempfile
 
@@ -1695,6 +1772,7 @@ def main() -> int:
     test_depth_passes(archive)
     test_aperture_macros()
     test_silkscreen_stitching(archive)
+    test_silkscreen_direction(archive)
     test_clearance_and_feeds(archive)
     test_updater_versions()
 

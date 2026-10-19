@@ -109,8 +109,8 @@ class Preferences:
                 _apply(profile, json.loads(raw))
             if abs(profile.work_x - 140.0) < 1e-6 and abs(profile.work_y - 90.0) < 1e-6:
                 profile.work_y = 200.0
-            if abs(profile.rapid_z - 2.0) < 1e-9:
-                profile.rapid_z = 0.6
+            if abs(profile.rapid_z - 0.6) < 1e-9:
+                profile.rapid_z = 2.0
             if abs(config.alignment_hole_diameter - 3.0) < 1e-9:
                 config.alignment_hole_diameter = 2.0
         except Exception:

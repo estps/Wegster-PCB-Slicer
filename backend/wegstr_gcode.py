@@ -37,7 +37,7 @@ class MachineProfile:
     work_y: float = 200.0
     work_z: float = 40.0
 
-    rapid_z: float = 0.6
+    rapid_z: float = 2.0
     safe_z: float = 8.0
     tool_change_z: float = 20.0
 

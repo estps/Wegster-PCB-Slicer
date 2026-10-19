@@ -976,6 +976,48 @@ def generate_alignment_holes(
     return holes
 
 
+def _stitch_rings(rings: Sequence[Polyline], kind: str) -> Polyline | None:
+    usable = [ring for ring in rings if len(ring.points) >= 2]
+    if not usable:
+        return None
+    if len(usable) == 1:
+        return usable[0]
+
+    def core(polyline: Polyline) -> np.ndarray:
+        points = polyline.points
+        if polyline.closed and np.allclose(points[0], points[-1]):
+            return points[:-1]
+        return points
+
+    blocks: list[np.ndarray] = []
+    first = usable[0]
+    if first.closed:
+        points = core(first)
+        blocks.append(np.vstack([points, points[:1]]))
+    else:
+        blocks.append(first.points)
+
+    cursor = blocks[0][-1]
+    for polyline in usable[1:]:
+        points = core(polyline)
+        if len(points) == 0:
+            continue
+        deltas = points - cursor
+        index = int(np.argmin(np.hypot(deltas[:, 0], deltas[:, 1])))
+        if polyline.closed:
+            ordered = np.vstack([points[index:], points[:index], points[index : index + 1]])
+        else:
+            reversed_points = points[::-1]
+            d_start = float(np.hypot(*(points[0] - cursor)))
+            d_end = float(np.hypot(*(points[-1] - cursor)))
+            ordered = reversed_points if d_end < d_start else points
+        blocks.append(ordered)
+        cursor = ordered[-1]
+
+    combined = np.vstack(blocks)
+    return Polyline(combined, False, kind)
+
+
 def generate_silkscreen_cutout(
     openings: BaseGeometry | None,
     tool: ToolSpec,
@@ -990,7 +1032,7 @@ def generate_silkscreen_cutout(
         return []
 
     polylines: list[Polyline] = []
-    stepover = max(0.7 * 2.0 * radius, 0.05)
+    stepover = max(0.35 * 2.0 * radius, 0.02)
 
     for polygon in iter_polygons(region):
         perimeter = polygon.exterior.length if polygon.exterior else 0.0
@@ -1007,6 +1049,7 @@ def generate_silkscreen_cutout(
             continue
 
         current: BaseGeometry | None = polygon
+        pad_rings: list[Polyline] = []
         for _ in range(config.rubout_max_iterations):
             if current is None or current.is_empty:
                 break
@@ -1015,8 +1058,12 @@ def generate_silkscreen_cutout(
                     ring, config.simplify_tolerance, "silkscreen"
                 )
                 if polyline is not None and polyline.length > 0.05:
-                    polylines.append(polyline)
+                    pad_rings.append(polyline)
             current = _buffer(current, -stepover, config.quad_segs)
+
+        stitched = _stitch_rings(pad_rings, "silkscreen")
+        if stitched is not None:
+            polylines.append(stitched)
 
     return polylines
 

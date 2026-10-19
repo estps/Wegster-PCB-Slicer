@@ -1618,6 +1618,47 @@ def test_aperture_macros() -> None:
     )
 
 
+def test_silkscreen_stitching(archive: Path) -> None:
+    print("\n== Silkscreen cut-out stitching ==")
+    import shapely
+
+    project = load_project(archive)
+    try:
+        config = SlicerConfig()
+        config.mill_bottom = False
+        config.alignment_holes = False
+        config.silkscreen_enabled = True
+        config.silkscreen_bottom = False
+        plan = plan_toolpaths(project, config)
+
+        groups = [g for g in plan.groups if g.kind == "silkscreen" and g.side == "top"]
+        check(bool(groups), "a silkscreen cut-out group is produced")
+        if not groups:
+            return
+        group = groups[0]
+        pads = plan.board.pads.get("top")
+        pad_count = len([p for p in shapely.get_parts(pads) if not p.is_empty]) if pads is not None else 0
+        check(pad_count > 0, f"{pad_count} pad openings to clear")
+
+        check(
+            len(group.polylines) <= pad_count,
+            f"one path per pad ({len(group.polylines)} paths for {pad_count} pads)",
+        )
+        check(
+            any(not polyline.closed for polyline in group.polylines),
+            "concentric rings are stitched into open snake paths",
+        )
+        segments = sum(len(polyline.points) for polyline in group.polylines)
+        check(
+            segments > len(group.polylines) * 20,
+            f"stitched paths still carry the full contour ({segments} points)",
+        )
+        report = verify_plan(plan, config, WEGSTR_LIGHT)
+        check(report.ok, "the stitched silkscreen program still verifies")
+    finally:
+        project.cleanup()
+
+
 def main() -> int:
     import tempfile
 
@@ -1653,6 +1694,7 @@ def main() -> int:
     test_isolation_preset()
     test_depth_passes(archive)
     test_aperture_macros()
+    test_silkscreen_stitching(archive)
     test_clearance_and_feeds(archive)
     test_updater_versions()
 

@@ -172,6 +172,7 @@ class SlicerConfig:
     silkscreen_enabled: bool = False
     silkscreen_mode: str = "cutout"
     silkscreen_inside_out: bool = True
+    silkscreen_reverse: bool = False
     silkscreen_depth: float = 0.05
     silkscreen_clear_pads: bool = True
     silkscreen_pad_clearance: float = 0.10
@@ -247,6 +248,7 @@ class Polyline:
     points: np.ndarray
     closed: bool = False
     kind: str = "cut"
+    directed: bool = False
 
     def __post_init__(self) -> None:
         self.points = np.asarray(self.points, dtype=float).reshape(-1, 2)
@@ -485,6 +487,8 @@ def _slice_ring(points: np.ndarray, cumulative: np.ndarray, start: float, end: f
 def _orient_entry(polyline: Polyline, x: float, y: float) -> Polyline:
     points = polyline.points
     if len(points) < 2:
+        return polyline
+    if polyline.directed:
         return polyline
     if polyline.closed:
         core = points[:-1] if np.allclose(points[0], points[-1]) else points
@@ -1061,6 +1065,7 @@ def generate_silkscreen_cutout(
                     np.asarray([[centre.x, centre.y], [centre.x, centre.y]]),
                     closed=False,
                     kind="silkscreen",
+                    directed=True,
                 )
             )
             continue
@@ -1087,7 +1092,12 @@ def generate_silkscreen_cutout(
                 stitched = Polyline(
                     np.vstack([start, stitched.points]), False, "silkscreen"
                 )
-            polylines.append(stitched)
+            points = stitched.points
+            if config.silkscreen_reverse:
+                points = np.ascontiguousarray(points[::-1])
+            polylines.append(
+                Polyline(points, False, "silkscreen", directed=True)
+            )
 
     return polylines
 

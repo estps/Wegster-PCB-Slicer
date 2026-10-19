@@ -1664,6 +1664,8 @@ def test_silkscreen_direction(archive: Path) -> None:
     import math
     import re
 
+    import numpy as np
+
     from wegstr_gcode import emit_program
 
     project = load_project(archive)
@@ -1716,17 +1718,53 @@ def test_silkscreen_direction(archive: Path) -> None:
             runs.append(current)
 
         check(len(runs) > 5, f"{len(runs)} separate silkscreen cuts found")
-        inside = 0
-        for start, points in runs:
-            cx, cy = start
-            first = math.hypot(points[0][0] - cx, points[0][1] - cy)
-            last = math.hypot(points[-1][0] - cx, points[-1][1] - cy)
-            if last > first:
-                inside += 1
+
+        def direction(reverse: bool) -> tuple[int, int]:
+            config.silkscreen_reverse = reverse
+            plan = plan_toolpaths(project, config)
+            group = next(g for g in plan.groups if g.kind == "silkscreen")
+            inside = outside = 0
+            for polyline in group.polylines:
+                points = polyline.points
+                if len(points) < 20:
+                    continue
+                cx = (points[:, 0].min() + points[:, 0].max()) / 2.0
+                cy = (points[:, 1].min() + points[:, 1].max()) / 2.0
+                radius = np.hypot(points[:, 0] - cx, points[:, 1] - cy)
+                window = max(3, len(radius) // 8)
+                start_radius = float(np.median(radius[:window]))
+                end_radius = float(np.median(radius[-window:]))
+                if end_radius > start_radius:
+                    inside += 1
+                else:
+                    outside += 1
+            return inside, outside
+
+        inside, outside = direction(False)
         check(
-            inside == len(runs),
-            f"every cut run ends further from its start than it begins "
-            f"({inside}/{len(runs)}) inside-out",
+            inside > 0 and outside == 0,
+            f"inside-out by default ({inside} out, {outside} in)",
+        )
+
+        config.silkscreen_reverse = True
+        plan = plan_toolpaths(project, config)
+        group = next(g for g in plan.groups if g.kind == "silkscreen")
+        flipped_in = flipped_out = 0
+        for polyline in group.polylines:
+            points = polyline.points
+            if len(points) < 20:
+                continue
+            cx = (points[:, 0].min() + points[:, 0].max()) / 2.0
+            cy = (points[:, 1].min() + points[:, 1].max()) / 2.0
+            radius = np.hypot(points[:, 0] - cx, points[:, 1] - cy)
+            window = max(3, len(radius) // 8)
+            if float(np.median(radius[-window:])) > float(np.median(radius[:window])):
+                flipped_in += 1
+            else:
+                flipped_out += 1
+        check(
+            flipped_out > 0 and flipped_in == 0,
+            f"the reverse flag flips every pad ({flipped_out} in, {flipped_in} out)",
         )
         check(
             abs(config.silkscreen_depth) > 0,

@@ -1209,6 +1209,14 @@ class MainWindow(QMainWindow):
             "On: plunge at the pad centre and spiral outwards.\n"
             "Off: start at the pad edge and work inwards."
         )
+        self._bind_toggle(
+            card, "Reverse each pad",
+            lambda: self.config.silkscreen_reverse,
+            lambda v: setattr(self.config, "silkscreen_reverse", v),
+        ).setToolTip(
+            "Flips the direction of every pad's path. Use this when the machine\n"
+            "runs a pad the wrong way round."
+        )
 
         self._bind_slider(
             card, "Depth", 0.02, 0.5,

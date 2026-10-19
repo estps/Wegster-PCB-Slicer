@@ -7,7 +7,7 @@
 ; registers a normal uninstaller in Add/Remove Programs.
 
 #define AppName        "Wegstr PCB Slicer"
-#define AppVersion     "1.2.6"
+#define AppVersion     "1.2.7"
 #define AppPublisher   "Wegstr"
 #define AppExeName     "Wegstr PCB Slicer.exe"
 #define AppDescription "PCB slicer and G-code generator for the Wegstr Light CNC"

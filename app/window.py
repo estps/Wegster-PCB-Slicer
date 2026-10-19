@@ -1201,6 +1201,15 @@ class MainWindow(QMainWindow):
         )
         card.add_row("Mode", self.silk_mode_combo)
 
+        self._bind_toggle(
+            card, "Cut inside-out",
+            lambda: self.config.silkscreen_inside_out,
+            lambda v: setattr(self.config, "silkscreen_inside_out", v),
+        ).setToolTip(
+            "On: plunge at the pad centre and spiral outwards.\n"
+            "Off: start at the pad edge and work inwards."
+        )
+
         self._bind_slider(
             card, "Depth", 0.02, 0.5,
             lambda: self.config.silkscreen_depth,

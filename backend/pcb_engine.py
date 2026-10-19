@@ -171,6 +171,7 @@ class SlicerConfig:
 
     silkscreen_enabled: bool = False
     silkscreen_mode: str = "cutout"
+    silkscreen_inside_out: bool = True
     silkscreen_depth: float = 0.05
     silkscreen_clear_pads: bool = True
     silkscreen_pad_clearance: float = 0.10
@@ -1018,6 +1019,22 @@ def _stitch_rings(rings: Sequence[Polyline], kind: str) -> Polyline | None:
     return Polyline(combined, False, kind)
 
 
+def _order_rings(
+    rings: Sequence[Polyline], inside_out: bool
+) -> list[Polyline]:
+    def area(polyline: Polyline) -> float:
+        points = polyline.points
+        if len(points) < 4:
+            return 0.0
+        polygon = Polygon(points)
+        if not polygon.is_valid:
+            polygon = polygon.buffer(0)
+        return abs(polygon.area)
+
+    ordered = sorted(rings, key=area, reverse=not inside_out)
+    return ordered
+
+
 def generate_silkscreen_cutout(
     openings: BaseGeometry | None,
     tool: ToolSpec,
@@ -1061,7 +1078,7 @@ def generate_silkscreen_cutout(
                     pad_rings.append(polyline)
             current = _buffer(current, -stepover, config.quad_segs)
 
-        pad_rings.reverse()
+        pad_rings = _order_rings(pad_rings, config.silkscreen_inside_out)
         stitched = _stitch_rings(pad_rings, "silkscreen")
         if stitched is not None:
             centre = polygon.representative_point()

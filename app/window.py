@@ -2280,12 +2280,8 @@ class MainWindow(QMainWindow):
         self.scrubber.blockSignals(True)
         self.scrubber.setValue(self.scrubber.maximum())
         self.scrubber.blockSignals(False)
-        ox, oy, y_down = self._current_work_origin()
         self.viewer.set_program(
-            self.program,
-            (self.profile.work_x, self.profile.work_y),
-            (ox, oy),
-            y_down,
+            self.program, (self.profile.work_x, self.profile.work_y)
         )
         self.viewer.fit()
         self.transport.setVisible(True)

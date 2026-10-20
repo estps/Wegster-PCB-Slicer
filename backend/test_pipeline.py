@@ -1848,6 +1848,44 @@ def test_drill_alignment() -> None:
     project.cleanup()
 
 
+def test_gcode_origin_header(archive: Path) -> None:
+    print("\n== G-code origin header ==")
+    from gcode_reader import read_program
+    from wegstr_gcode import emit_program
+
+    project = load_project(archive)
+    try:
+        config = SlicerConfig()
+        config.mill_bottom = False
+        config.alignment_holes = True
+        config.origin_mode = "pin_right_drop"
+        plan = plan_toolpaths(project, config)
+        group = next(g for g in plan.groups if g.kind == "alignment")
+        text = emit_program([group], config, WEGSTR_LIGHT, "origin", board=plan.board)
+
+        check("WEGSTR-ORIGIN" in text, "the program records its work origin")
+        program = read_program(text)
+        pins = plan.board.pins or ()
+        right = max(pins, key=lambda p: p[0]) if pins else (0.0, 0.0)
+        check(
+            abs(program.origin[0] - right[0]) < 0.01,
+            f"origin X matches the right pin ({program.origin[0]:.2f})",
+        )
+        check(
+            abs(program.origin[1] - (right[1] - config.alignment_pin_clearance)) < 0.01,
+            f"origin Y sits one clearance below the pin ({program.origin[1]:.2f})",
+        )
+        check(program.y_down, "the header records the Y direction")
+
+        legacy = read_program("G21\nG90\nG0 X10 Y10\nM3 S12000\nG1 Z-0.1 F100\nG1 X20 Y10\nM5\nM30\n")
+        check(
+            legacy.origin == (0.0, 0.0) and not legacy.y_down,
+            "a file without the header is treated as plain machine coordinates",
+        )
+    finally:
+        project.cleanup()
+
+
 def main() -> int:
     import tempfile
 
@@ -1886,6 +1924,7 @@ def main() -> int:
     test_silkscreen_stitching(archive)
     test_silkscreen_direction(archive)
     test_drill_alignment()
+    test_gcode_origin_header(archive)
     test_clearance_and_feeds(archive)
     test_updater_versions()
 

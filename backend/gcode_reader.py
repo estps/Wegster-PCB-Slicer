@@ -8,6 +8,9 @@ from pathlib import Path
 __all__ = ["MoveSegment", "GCodeProgram", "read_program", "read_file"]
 
 _WORD = re.compile(r"([A-Za-z])\s*([+-]?[0-9]*\.?[0-9]+)")
+_ORIGIN = re.compile(
+    r"\(WEGSTR-ORIGIN\s+([+-]?[0-9]*\.?[0-9]+)\s+([+-]?[0-9]*\.?[0-9]+)\s+([01])\)"
+)
 
 IN_MATERIAL_Z = -0.001
 
@@ -46,6 +49,8 @@ class GCodeProgram:
     segments: list[MoveSegment] = field(default_factory=list)
     pauses: list[tuple[float, float, int]] = field(default_factory=list)
     stats: dict = field(default_factory=dict)
+    origin: tuple[float, float] = (0.0, 0.0)
+    y_down: bool = False
 
     @property
     def max_index(self) -> int:
@@ -65,6 +70,14 @@ class GCodeProgram:
 
 def read_program(text: str, name: str = "", path: Path | None = None) -> GCodeProgram:
     program = GCodeProgram(name=name, path=path)
+
+    origin_match = _ORIGIN.search(text)
+    if origin_match:
+        program.origin = (
+            float(origin_match.group(1)),
+            float(origin_match.group(2)),
+        )
+        program.y_down = origin_match.group(3) == "1"
 
     x = y = z = 0.0
     absolute = True

@@ -135,15 +135,11 @@ class ToolpathView(QGraphicsView):
         self._progress = 1.0
         self._progress_index = 0
 
-    def set_program(
-        self,
-        program,
-        machine: tuple[float, float],
-        origin: tuple[float, float] = (0.0, 0.0),
-        y_down: bool = False,
-    ) -> None:
+    def set_program(self, program, machine: tuple[float, float]) -> None:
         self.set_machine(machine)
         flip = machine[1]
+        origin = getattr(program, "origin", (0.0, 0.0))
+        y_down = bool(getattr(program, "y_down", False))
         ox, oy = float(origin[0]), float(origin[1])
 
         def to_scene(x: float, y: float) -> tuple[float, float]:

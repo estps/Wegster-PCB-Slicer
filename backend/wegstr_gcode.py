@@ -486,6 +486,9 @@ def emit_program(
             f"Origin    : {config.origin_mode.replace('_', '-')} + "
             f"{_margin_text(board, config)} margin"
         )
+    builder.comment(
+        f"WEGSTR-ORIGIN {origin_x:.4f} {origin_y:.4f} {1 if y_down else 0}"
+    )
     if setup_note:
         builder.comment(f"Setup     : {setup_note}")
     builder.comment("")

@@ -130,6 +130,8 @@ class SlicerConfig:
     alignment_pins_auto: bool = True
     alignment_pin_span: float = 80.0
     alignment_pin_clearance: float = 5.0
+    alignment_pins_from_top: bool = False
+    alignment_pin_from_top: float = 20.0
 
     isolation_tool: ToolSpec = field(
         default_factory=lambda: ToolSpec("0.1mm 30deg V-bit", "vbit", 0.1, 0.0, 30.0)
@@ -785,14 +787,23 @@ def build_board(project: PcbProject, config: SlicerConfig) -> BoardGeometry:
             max(centre_x - source_width / 2.0, margin_x),
             config.machine_x - margin_x - source_width,
         )
-        offset_y = max(margin_y, (config.machine_y - source_height) / 2.0)
-        top = offset_y + source_height
-        if top + clearance > config.machine_y - margin_y:
-            offset_y = max(
-                margin_y, config.machine_y - margin_y - clearance - source_height
-            )
+        if config.alignment_pins_from_top:
+            drop = min(max(0.0, config.alignment_pin_from_top), config.machine_y)
+            pin_y = config.machine_y - drop
+            offset_y = pin_y - clearance - source_height
+            if offset_y < margin_y:
+                offset_y = margin_y
+                pin_y = offset_y + clearance + source_height
+                pins_shifted = True
+        else:
+            offset_y = max(margin_y, (config.machine_y - source_height) / 2.0)
             top = offset_y + source_height
-        pin_y = top + clearance
+            if top + clearance > config.machine_y - margin_y:
+                offset_y = max(
+                    margin_y, config.machine_y - margin_y - clearance - source_height
+                )
+                top = offset_y + source_height
+            pin_y = top + clearance
         pins = (
             (centre_x - span / 2.0, pin_y),
             (centre_x + span / 2.0, pin_y),

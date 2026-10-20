@@ -554,21 +554,9 @@ class ToolpathView(QGraphicsView):
 
     def _paint_bed(self, painter: QPainter, scale: float) -> None:
         if self._show_bed:
-            painter.setPen(QPen(theme.qcolor(theme.SURFACE1), 0.0))
-            painter.setBrush(theme.qcolor(theme.BASE))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(theme.qcolor(theme.YELLOW, 210), 1.6))
             painter.drawRect(self._bed)
-
-            step = _nice_step(60.0 / scale) if scale > 0 else 10.0
-            if step > 0:
-                painter.setPen(QPen(theme.qcolor(theme.SURFACE0), 0.0))
-                x = 0.0
-                while x <= self._bed.width() + 1e-6:
-                    painter.drawLine(QPointF(x, 0.0), QPointF(x, self._bed.height()))
-                    x += step
-                y = 0.0
-                while y <= self._bed.height() + 1e-6:
-                    painter.drawLine(QPointF(0.0, y), QPointF(self._bed.width(), y))
-                    y += step
 
     def _paint_plan(self, painter: QPainter) -> None:
         if self._show_copper:

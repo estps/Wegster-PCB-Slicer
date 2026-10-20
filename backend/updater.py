@@ -28,7 +28,7 @@ REPO = os.environ.get("WEGSTR_UPDATE_REPO", "estps/Wegster-PCB-Slicer")
 API_URL = "https://api.github.com/repos/{repo}/releases"
 TIMEOUT = 6.0
 
-FALLBACK_VERSION = "1.2.10"
+FALLBACK_VERSION = "1.2.11"
 
 
 @dataclass

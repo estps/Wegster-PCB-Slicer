@@ -1335,6 +1335,22 @@ class MainWindow(QMainWindow):
                 1, " mm",
             )
         )
+        self._bind_toggle(
+            card, "Measure pins from the bed top",
+            lambda: self.config.alignment_pins_from_top,
+            lambda v: setattr(self.config, "alignment_pins_from_top", v),
+        ).setToolTip(
+            "On: the pins sit a set distance below the top edge of the bed and the\n"
+            "board follows them. Off: the pins sit above the board."
+        )
+        self._from_top_rows = [
+            self._bind_slider(
+                card, "Distance from top", 0.0, 120.0,
+                lambda: self.config.alignment_pin_from_top,
+                lambda v: setattr(self.config, "alignment_pin_from_top", v),
+                1, " mm",
+            )
+        ]
 
         card.add_label(
             "Gets its own file, 01_alignment.gcode, and runs first. It drills "
@@ -1695,6 +1711,11 @@ class MainWindow(QMainWindow):
             row.set_enabled(not self.config.alignment_pins_auto)
         for row in getattr(self, "_auto_pin_rows", []):
             row.set_enabled(self.config.alignment_pins_auto)
+        for row in getattr(self, "_from_top_rows", []):
+            row.set_enabled(
+                self.config.alignment_pins_auto
+                and self.config.alignment_pins_from_top
+            )
         for row in getattr(self, "_place_rows", []):
             row.set_enabled(self.config.board_place_manual)
         if hasattr(self, "rotation_stat"):

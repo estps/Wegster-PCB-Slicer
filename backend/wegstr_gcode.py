@@ -425,12 +425,12 @@ def work_origin(
     if config.origin_mode == "pin_right_drop":
         right = max(pins, key=lambda pin: pin[0])
         drop = max(0.0, float(config.alignment_pin_clearance))
-        return (float(right[0]), float(right[1]) - drop, True)
+        return (float(right[0]), float(right[1]) + drop, True)
 
     ordered = sorted(pins, key=lambda pin: (pin[0], -pin[1]))
     pin = ordered[0]
     drop = max(0.0, float(config.alignment_pin_clearance))
-    return (float(pin[0]), float(pin[1]) - drop, True)
+    return (float(pin[0]), float(pin[1]) + drop, True)
 
 
 def work_envelope(

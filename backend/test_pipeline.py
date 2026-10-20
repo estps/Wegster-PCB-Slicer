@@ -1306,8 +1306,8 @@ def test_pin_origin() -> None:
                     f"origin X is the left pin ({origin_x:.2f})",
                 )
                 check(
-                    abs(origin_y - (pins[0][1] - config.alignment_pin_clearance)) < 0.5,
-                    f"origin Y is the pin line dropped by the clearance "
+                    abs(origin_y - (pins[0][1] + config.alignment_pin_clearance)) < 0.5,
+                    f"origin Y sits one clearance clear of the pin line "
                     f"({origin_y:.2f})",
                 )
 
@@ -1335,11 +1335,11 @@ def test_pin_origin() -> None:
                 "the header documents the pin origin",
             )
             check(
-                min(ys) >= -config.alignment_pin_clearance - 0.01,
-                f"the pin line sits just below zero (min Y {min(ys):.2f})",
+                min(ys) >= -0.01,
+                f"the pins drill at positive Y (min Y {min(ys):.2f})",
             )
             check(
-                max(ys) <= 160.0,
+                max(ys) <= 162.0,
                 f"the board sits below the pin (max Y {max(ys):.2f})",
             )
             check(
@@ -1872,8 +1872,8 @@ def test_gcode_origin_header(archive: Path) -> None:
             f"origin X matches the right pin ({program.origin[0]:.2f})",
         )
         check(
-            abs(program.origin[1] - (right[1] - config.alignment_pin_clearance)) < 0.01,
-            f"origin Y sits one clearance below the pin ({program.origin[1]:.2f})",
+            abs(program.origin[1] - (right[1] + config.alignment_pin_clearance)) < 0.01,
+            f"origin Y sits one clearance above the pin ({program.origin[1]:.2f})",
         )
         check(program.y_down, "the header records the Y direction")
 

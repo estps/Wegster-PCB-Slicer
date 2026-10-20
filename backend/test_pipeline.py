@@ -1306,8 +1306,9 @@ def test_pin_origin() -> None:
                     f"origin X is the left pin ({origin_x:.2f})",
                 )
                 check(
-                    abs(origin_y - pins[0][1]) < 0.5,
-                    f"origin Y is the pin line ({origin_y:.2f})",
+                    abs(origin_y - (pins[0][1] - config.alignment_pin_clearance)) < 0.5,
+                    f"origin Y is the pin line dropped by the clearance "
+                    f"({origin_y:.2f})",
                 )
 
             low_x, high_x, low_y, high_y = work_envelope(
@@ -1334,8 +1335,8 @@ def test_pin_origin() -> None:
                 "the header documents the pin origin",
             )
             check(
-                min(ys) >= -0.001,
-                f"no Y move goes above the pin (min Y {min(ys):.2f})",
+                min(ys) >= -config.alignment_pin_clearance - 0.01,
+                f"the pin line sits just below zero (min Y {min(ys):.2f})",
             )
             check(
                 max(ys) <= 160.0,

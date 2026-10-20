@@ -107,6 +107,9 @@ class Planner(QObject):
 
 
 class MainWindow(QMainWindow):
+    update_found = Signal(object)
+    update_ready = Signal(object, object)
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Wegstr PCB Slicer")
@@ -183,6 +186,8 @@ class MainWindow(QMainWindow):
             else:
                 QTimer.singleShot(60, lambda: self._load_files(value))
 
+        self.update_found.connect(self._show_update_banner)
+        self.update_ready.connect(self._relaunch_update)
         QTimer.singleShot(1400, self._check_for_updates)
         QTimer.singleShot(300, self._register_in_start_menu)
 
@@ -1814,14 +1819,24 @@ class MainWindow(QMainWindow):
         thread.start()
 
     def _run_update_check(self) -> None:
-        info = check_for_update()
+        try:
+            info = check_for_update()
+        except Exception:
+            return
         if info is None:
             return
         self._update_info = info
         if self._auto_update and getattr(sys, "frozen", False) and info.asset_url:
-            if self._install_update(info):
+            try:
+                from updater import download_update
+
+                exe = download_update(info)
+            except Exception:
+                exe = None
+            if exe is not None:
+                self.update_ready.emit(exe, info)
                 return
-        QTimer.singleShot(0, self._show_update_banner)
+        self.update_found.emit(info)
 
     def _install_update(self, info: UpdateInfo) -> bool:
         try:
@@ -1832,7 +1847,7 @@ class MainWindow(QMainWindow):
             return False
         if exe is None:
             return False
-        QTimer.singleShot(0, lambda: self._relaunch_update(exe, info))
+        self.update_ready.emit(exe, info)
         return True
 
     def _relaunch_update(self, exe: Path, info: UpdateInfo) -> None:
@@ -1885,7 +1900,9 @@ class MainWindow(QMainWindow):
                 f"{running} - search for 'Wegstr' to launch it."
             )
 
-    def _show_update_banner(self) -> None:
+    def _show_update_banner(self, info: object = None) -> None:
+        if info is not None:
+            self._update_info = info
         info = self._update_info
         if info is None:
             return

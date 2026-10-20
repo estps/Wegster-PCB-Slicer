@@ -188,6 +188,11 @@ class MainWindow(QMainWindow):
 
         self.update_found.connect(self._show_update_banner)
         self.update_ready.connect(self._relaunch_update)
+        self._update_stage = None
+        self._update_pending = None
+        self._update_poll = QTimer(self)
+        self._update_poll.setInterval(400)
+        self._update_poll.timeout.connect(self._poll_update)
         QTimer.singleShot(1400, self._check_for_updates)
         QTimer.singleShot(300, self._register_in_start_menu)
 
@@ -1815,16 +1820,22 @@ class MainWindow(QMainWindow):
         pass
 
     def _check_for_updates(self) -> None:
+        self._update_stage = None
+        self._update_pending = None
         thread = threading.Thread(target=self._run_update_check, daemon=True)
         thread.start()
+        self._update_poll.start()
 
     def _run_update_check(self) -> None:
         try:
             info = check_for_update()
         except Exception:
+            self._update_stage = "done"
             return
         if info is None:
+            self._update_stage = "done"
             return
+
         self._update_info = info
         if self._auto_update and getattr(sys, "frozen", False) and info.asset_url:
             try:
@@ -1834,21 +1845,22 @@ class MainWindow(QMainWindow):
             except Exception:
                 exe = None
             if exe is not None:
-                self.update_ready.emit(exe, info)
+                self._update_pending = (exe, info)
+                self._update_stage = "ready"
                 return
-        self.update_found.emit(info)
+        self._update_stage = "banner"
 
-    def _install_update(self, info: UpdateInfo) -> bool:
-        try:
-            from updater import download_update
-
-            exe = download_update(info)
-        except Exception:
-            return False
-        if exe is None:
-            return False
-        self.update_ready.emit(exe, info)
-        return True
+    def _poll_update(self) -> None:
+        stage = getattr(self, "_update_stage", None)
+        if stage is None:
+            return
+        self._update_poll.stop()
+        if stage == "ready" and self._update_pending:
+            exe, info = self._update_pending
+            self._update_pending = None
+            self._relaunch_update(exe, info)
+        elif stage == "banner":
+            self._show_update_banner(self._update_info)
 
     def _relaunch_update(self, exe: Path, info: UpdateInfo) -> None:
         self.status_label.setText(f"Updating to {info.version} - restarting…")

@@ -425,12 +425,12 @@ def work_origin(
     if config.origin_mode == "pin_right_drop":
         right = max(pins, key=lambda pin: pin[0])
         drop = max(0.0, float(config.alignment_pin_clearance))
-        return (float(right[0]), float(right[1]) + drop, True)
+        return (float(right[0]), float(right[1]) - drop, False)
 
     ordered = sorted(pins, key=lambda pin: (pin[0], -pin[1]))
     pin = ordered[0]
     drop = max(0.0, float(config.alignment_pin_clearance))
-    return (float(pin[0]), float(pin[1]) + drop, True)
+    return (float(pin[0]), float(pin[1]) - drop, False)
 
 
 def work_envelope(
@@ -476,10 +476,10 @@ def emit_program(
             f"Board     : {board.width:.2f} x {board.height:.2f} mm "
             f"({board.source_size[0]:.2f} x {board.source_size[1]:.2f} mm artwork)"
         )
-    if y_down:
+    if config.origin_mode in ("pin_top_left", "pin_right_drop"):
         builder.comment(
-            f"Origin    : X0 Y0 at the top-left alignment pin "
-            f"({origin_x:.1f}, {origin_y:.1f} mm); +X right, +Y down"
+            f"Origin    : X0 Y0 at the alignment pin "
+            f"({origin_x:.1f}, {origin_y:.1f} mm); +X right, +Y up"
         )
     else:
         builder.comment(

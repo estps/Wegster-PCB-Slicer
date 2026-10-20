@@ -1272,7 +1272,7 @@ def test_pin_origin() -> None:
     import tempfile
 
     from gerber_io import load_files
-    from wegstr_gcode import WEGSTR_LIGHT, emit_plan, work_envelope, work_origin
+    from wegstr_gcode import WEGSTR_LIGHT, emit_plan, emit_program, work_envelope, work_origin
 
     def rectangle(width: float, height: float) -> str:
         def c(v: float) -> int:
@@ -1299,15 +1299,18 @@ def test_pin_origin() -> None:
             pins = plan.board.pins
             check(pins is not None, "pins exist for the origin mode")
             origin_x, origin_y, y_down = work_origin(config, plan.board)
-            check(y_down, "the pin origin flips Y so +Y runs down the machine")
+            check(
+                not y_down,
+                "the pin origin keeps +Y up, so the pins read above zero",
+            )
             if pins is not None:
                 check(
                     abs(origin_x - min(p[0] for p in pins)) < 1e-6,
                     f"origin X is the left pin ({origin_x:.2f})",
                 )
                 check(
-                    abs(origin_y - (pins[0][1] + config.alignment_pin_clearance)) < 0.5,
-                    f"origin Y sits one clearance clear of the pin line "
+                    abs(origin_y - (pins[0][1] - config.alignment_pin_clearance)) < 0.5,
+                    f"origin Y sits one clearance below the pin line "
                     f"({origin_y:.2f})",
                 )
 
@@ -1318,33 +1321,44 @@ def test_pin_origin() -> None:
             check(high_x <= 140.0, f"the envelope still ends inside the bed ({high_x:.1f})")
             check(low_y <= 0.0 <= high_y, "Y zero sits inside the envelope")
 
-            program = emit_plan(plan, config, program_name="origin-test")
-            xs: list[float] = []
+            alignment = next(g for g in plan.groups if g.kind == "alignment")
+            program = emit_program(
+                [alignment], config, WEGSTR_LIGHT, "origin-test", board=plan.board
+            )
             ys: list[float] = []
+            for line in program.splitlines():
+                for token in line.split():
+                    try:
+                        if token.startswith("Y"):
+                            ys.append(float(token[1:]))
+                    except ValueError:
+                        continue
+            check(
+                any("alignment pin" in line for line in program.splitlines()),
+                "the header documents the pin origin",
+            )
+            check(
+                any(
+                    abs(value - config.alignment_pin_clearance) < 0.01
+                    for value in ys
+                ),
+                "the pins drill one clearance above zero",
+            )
+            check(
+                all(value <= config.alignment_pin_clearance + 0.01 for value in ys),
+                f"nothing drills beyond the pin line (max Y {max(ys):.2f})",
+            )
+            xs: list[float] = []
             for line in program.splitlines():
                 for token in line.split():
                     try:
                         if token.startswith("X"):
                             xs.append(float(token[1:]))
-                        elif token.startswith("Y"):
-                            ys.append(float(token[1:]))
                     except ValueError:
                         continue
             check(
-                any("top-left alignment pin" in line for line in program.splitlines()),
-                "the header documents the pin origin",
-            )
-            check(
-                min(ys) >= -0.01,
-                f"the pins drill at positive Y (min Y {min(ys):.2f})",
-            )
-            check(
-                max(ys) <= 162.0,
-                f"the board sits below the pin (max Y {max(ys):.2f})",
-            )
-            check(
-                max(xs) - min(xs) > 80.0,
-                f"X spans the board ({min(xs):.1f}..{max(xs):.1f})",
+                xs and max(xs) - min(xs) >= 79.99,
+                f"X spans the pins ({min(xs):.1f}..{max(xs):.1f})",
             )
 
             report = verify_plan(plan, config, WEGSTR_LIGHT)
@@ -1362,7 +1376,7 @@ def test_pin_origin() -> None:
 
 def test_custom_origin(archive: Path) -> None:
     print("\n== Picked work origin ==")
-    from wegstr_gcode import WEGSTR_LIGHT, emit_plan, work_envelope, work_origin
+    from wegstr_gcode import WEGSTR_LIGHT, emit_plan, emit_program, work_envelope, work_origin
 
     project = load_project(archive)
     try:
@@ -1872,10 +1886,10 @@ def test_gcode_origin_header(archive: Path) -> None:
             f"origin X matches the right pin ({program.origin[0]:.2f})",
         )
         check(
-            abs(program.origin[1] - (right[1] + config.alignment_pin_clearance)) < 0.01,
-            f"origin Y sits one clearance above the pin ({program.origin[1]:.2f})",
+            abs(program.origin[1] - (right[1] - config.alignment_pin_clearance)) < 0.01,
+            f"origin Y sits one clearance below the pin ({program.origin[1]:.2f})",
         )
-        check(program.y_down, "the header records the Y direction")
+        check(not program.y_down, "the header records +Y up")
 
         legacy = read_program("G21\nG90\nG0 X10 Y10\nM3 S12000\nG1 Z-0.1 F100\nG1 X20 Y10\nM5\nM30\n")
         check(

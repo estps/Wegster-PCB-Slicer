@@ -1515,6 +1515,42 @@ def _populate(
         _add_layer_file(project, path, layer_type, confidence, reason)
 
 
+def align_drills(project: PcbProject) -> list[str]:
+    outline = project.outline
+    if outline is None or not project.drills:
+        return []
+    ox0, oy0, ox1, oy1 = outline.bounds
+    oxc = (ox0 + ox1) / 2.0
+    oyc = (oy0 + oy1) / 2.0
+
+    notes: list[str] = []
+    for drill in project.drills:
+        if not drill.holes:
+            continue
+        xs = [hole.x for hole in drill.holes]
+        ys = [hole.y for hole in drill.holes]
+        dx0, dx1 = min(xs), max(xs)
+        dy0, dy1 = min(ys), max(ys)
+        overlaps = not (dx1 < ox0 or dx0 > ox1 or dy1 < oy0 or dy0 > oy1)
+        if overlaps:
+            continue
+        dx = oxc - (dx0 + dx1) / 2.0
+        dy = oyc - (dy0 + dy1) / 2.0
+        if abs(dx) < 1e-6 and abs(dy) < 1e-6:
+            continue
+        for hole in drill.holes:
+            hole.x += dx
+            hole.y += dy
+        note = (
+            f"{drill.name}: drill origin differed from the artwork; "
+            f"shifted by {dx:.2f}, {dy:.2f} mm to line up with the outline."
+        )
+        drill.warnings.append(note)
+        project.warnings.append(note)
+        notes.append(note)
+    return notes
+
+
 def load_project(source: str | Path) -> PcbProject:
     source = Path(source).expanduser()
     if not source.exists():
@@ -1550,6 +1586,7 @@ def load_project(source: str | Path) -> PcbProject:
         project.cleanup()
         raise GerberError(f"No parsable layers in {source}")
 
+    align_drills(project)
     return project
 
 
@@ -1591,6 +1628,8 @@ def load_files(
 
     if not project.layers and not project.drills:
         raise GerberError("None of the given files produced usable geometry.")
+
+    align_drills(project)
 
     names = {layer.layer_type for layer in project.layers}
     for layer_type, label in (

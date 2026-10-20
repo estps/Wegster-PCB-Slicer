@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import math
+import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -135,6 +137,7 @@ class MainWindow(QMainWindow):
         self._panel_hidden = self.preferences.restore_panel_hidden()
         self._theme_mode = theme.set_mode(self.preferences.restore_theme())
         self._density = theme.set_density(self.preferences.restore_density())
+        self._auto_update = self.preferences.restore_auto_update()
         theme.apply(QGuiApplication.instance())
         self.preferences.restore_job(self.config, self.profile)
         self._load_tool_db()
@@ -341,6 +344,16 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout(header)
         layout.setContentsMargins(14, 9, 14, 9)
         layout.setSpacing(10)
+
+        self.theme_button = QPushButton("Light")
+        self.theme_button.setCheckable(True)
+        self.theme_button.setChecked(self._theme_mode == "light")
+        self.theme_button.setFixedWidth(62)
+        self.theme_button.setToolTip(
+            "Switch between the AMOLED dark theme and the light theme"
+        )
+        self.theme_button.toggled.connect(self._on_theme_toggled)
+        layout.addWidget(self.theme_button)
 
         titles = QVBoxLayout()
         titles.setSpacing(0)
@@ -1347,6 +1360,25 @@ class MainWindow(QMainWindow):
     def _build_machine_card(self, layout: QVBoxLayout) -> None:
         card = Card("Machine & Feeds", theme.YELLOW, expanded=False)
         layout.addWidget(card)
+
+        self._bind_slider(
+            card, "Bed width", 20.0, 140.0,
+            lambda: self.profile.work_x,
+            lambda v: setattr(self.profile, "work_x", v),
+            0, " mm",
+        ).setToolTip(
+            "Usable bed width. Capped at the 140 mm machine limit; reduce it if\n"
+            "you only have part of the bed available."
+        )
+        self._bind_slider(
+            card, "Bed height", 20.0, 200.0,
+            lambda: self.profile.work_y,
+            lambda v: setattr(self.profile, "work_y", v),
+            0, " mm",
+        ).setToolTip(
+            "Usable bed depth. Capped at the 200 mm machine limit."
+        )
+
         self._bind_slider(
             card, "Cut feed", 20.0, 1200.0,
             lambda: self.profile.cut_feed,
@@ -1416,6 +1448,13 @@ class MainWindow(QMainWindow):
             f"× {self.profile.work_z:.0f} mm"
         )
 
+    def _on_auto_update_toggled(self, enabled: bool) -> None:
+        self._auto_update = bool(enabled)
+        self.preferences.save_auto_update(self._auto_update)
+        self.status_label.setText(
+            "Auto-update on" if enabled else "Auto-update off"
+        )
+
     def _on_density_toggled(self, comfortable: bool) -> None:
         self._density = theme.set_density("comfortable" if comfortable else "compact")
         theme.apply(QGuiApplication.instance())
@@ -1429,6 +1468,15 @@ class MainWindow(QMainWindow):
         mode = theme.set_mode("light" if light else "dark")
         self._theme_mode = mode
         theme.apply(QGuiApplication.instance())
+        for button in (
+            getattr(self, "theme_button", None),
+            self.viewer_toggles.get("light_mode"),
+        ):
+            if button is None:
+                continue
+            button.blockSignals(True)
+            button.setChecked(light)
+            button.blockSignals(False)
         self._refresh_inline_theme()
         self.viewer.refresh()
         self.preferences.save_theme(mode)
@@ -1463,6 +1511,13 @@ class MainWindow(QMainWindow):
             self._on_theme_toggled,
             "light_mode",
         )
+        auto_update = ToggleRow("Auto-update", self._auto_update)
+        auto_update.setToolTip(
+            "On launch, download a newer release, unpack it beside this one and\n"
+            "restart into it. Turn off to only get a download link."
+        )
+        auto_update.toggled.connect(self._on_auto_update_toggled)
+        card.add(auto_update)
         for kind, label in (
             ("isolation", "Isolation"),
             ("rubout", "Rub-out"),
@@ -1716,7 +1771,36 @@ class MainWindow(QMainWindow):
         if info is None:
             return
         self._update_info = info
+        if self._auto_update and getattr(sys, "frozen", False) and info.asset_url:
+            if self._install_update(info):
+                return
         QTimer.singleShot(0, self._show_update_banner)
+
+    def _install_update(self, info: UpdateInfo) -> bool:
+        try:
+            from updater import download_update
+
+            exe = download_update(info)
+        except Exception:
+            return False
+        if exe is None:
+            return False
+        QTimer.singleShot(0, lambda: self._relaunch_update(exe, info))
+        return True
+
+    def _relaunch_update(self, exe: Path, info: UpdateInfo) -> None:
+        self.status_label.setText(f"Updating to {info.version} - restarting…")
+        QGuiApplication.processEvents()
+        try:
+            subprocess.Popen(
+                [str(exe)],
+                close_fds=True,
+                creationflags=0x00000008 | 0x00000200,
+            )
+        except Exception:
+            self._show_update_banner()
+            return
+        QTimer.singleShot(600, QGuiApplication.quit)
 
     def _register_in_start_menu(self) -> None:
         from .shortcuts import is_current, shortcut_path, target_key

@@ -39,8 +39,10 @@ the board.
   the machine envelope before you ever hit cycle start.
 - **G-code viewer** — open any `.gcode`, scrub through it, and see rapids,
   plunges and tool changes with playback.
-- **Update check** — on launch it asks GitHub whether a newer release exists and
-  offers a download link. It never installs anything by itself.
+- **Auto-update** — on launch it asks GitHub for a newer release, downloads it,
+  unpacks it beside the current copy, restarts into it and quits. Nothing is
+  overwritten in place, so a failed update leaves the working copy alone. Turn
+  **Auto-update** off to get just a download link instead.
 - **Finds itself in Windows** — on first launch it adds a Start-menu shortcut
   (per-user, no admin needed) so you can type "Wegstr" into the search bar and
   hit it. Done once; remove it with `python tools\install_start_menu.py --remove`.

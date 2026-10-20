@@ -1783,6 +1783,61 @@ def test_silkscreen_direction(archive: Path) -> None:
         project.cleanup()
 
 
+def test_drill_alignment() -> None:
+    print("\n== Drill origin alignment ==")
+    from pathlib import Path as _Path
+
+    from shapely.geometry import Polygon
+
+    from gerber_io import (
+        DrillData,
+        DrillHole,
+        LayerData,
+        PcbProject,
+        align_drills,
+    )
+
+    project = PcbProject(source=_Path("."))
+    project.layers.append(
+        LayerData(
+            path=_Path("board.gko"),
+            layer_type=LayerType.EDGE_CUTS,
+            confidence=1.0,
+            reason="test",
+            geometry=Polygon([(0, 0), (30, 0), (30, 50), (0, 50)]),
+        )
+    )
+    project.drills.append(
+        DrillData(
+            path=_Path("board.drl"),
+            layer_type=LayerType.DRILL_PTH,
+            holes=[DrillHole(100.0, 100.0, 0.8), DrillHole(110.0, 100.0, 0.8)],
+        )
+    )
+
+    notes = align_drills(project)
+    check(bool(notes), "a mismatched drill origin is reported")
+    xs = [hole.x for hole in project.all_holes]
+    ys = [hole.y for hole in project.all_holes]
+    check(
+        min(xs) >= -0.01 and max(xs) <= 30.01 and min(ys) >= -0.01 and max(ys) <= 50.01,
+        f"holes moved inside the outline ({min(xs):.1f}..{max(xs):.1f}, "
+        f"{min(ys):.1f}..{max(ys):.1f})",
+    )
+    check(
+        abs((min(xs) + max(xs)) / 2.0 - 15.0) < 0.01,
+        "holes centre on the board",
+    )
+
+    before = [(hole.x, hole.y) for hole in project.all_holes]
+    check(not align_drills(project), "a second pass leaves aligned drills alone")
+    check(
+        before == [(hole.x, hole.y) for hole in project.all_holes],
+        "aligned holes are not moved again",
+    )
+    project.cleanup()
+
+
 def main() -> int:
     import tempfile
 
@@ -1820,6 +1875,7 @@ def main() -> int:
     test_aperture_macros()
     test_silkscreen_stitching(archive)
     test_silkscreen_direction(archive)
+    test_drill_alignment()
     test_clearance_and_feeds(archive)
     test_updater_versions()
 

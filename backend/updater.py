@@ -1,22 +1,34 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import re
+import shutil
 import ssl
+import sys
 import urllib.error
 import urllib.request
+import zipfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
-__all__ = ["UpdateInfo", "check_for_update", "current_version", "parse_version"]
+__all__ = [
+    "UpdateInfo",
+    "check_for_update",
+    "current_version",
+    "download_update",
+    "install_root",
+    "parse_version",
+]
 
 REPO = os.environ.get("WEGSTR_UPDATE_REPO", "estps/Wegster-PCB-Slicer")
 API_URL = "https://api.github.com/repos/{repo}/releases"
 TIMEOUT = 6.0
 
-FALLBACK_VERSION = "1.2.8"
+FALLBACK_VERSION = "1.2.9"
 
 
 @dataclass
@@ -68,6 +80,63 @@ def _fetch(url: str) -> Any:
     context = ssl.create_default_context()
     with urllib.request.urlopen(request, timeout=TIMEOUT, context=context) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def install_root() -> Path | None:
+    if not getattr(sys, "frozen", False):
+        return None
+    exe = Path(sys.executable).resolve()
+    return exe.parent.parent if exe.parent.name else exe.parent
+
+
+def extract_update(payload: bytes, target_root: Path, version: str) -> Path | None:
+    staging = target_root / f".update-{version}"
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            for member in archive.infolist():
+                resolved = (staging / member.filename).resolve()
+                if not str(resolved).startswith(str(staging.resolve())):
+                    raise ValueError(
+                        f"unsafe path in update archive: {member.filename!r}"
+                    )
+            archive.extractall(staging)
+
+        matches = sorted(staging.rglob("Wegstr PCB Slicer.exe"))
+        if not matches:
+            return None
+
+        source = matches[0].parent
+        final = target_root / f"Wegstr PCB Slicer {version}"
+        shutil.rmtree(final, ignore_errors=True)
+        shutil.move(str(source), str(final))
+        return final / "Wegstr PCB Slicer.exe"
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def download_update(
+    info: UpdateInfo,
+    root: Path | None = None,
+    timeout: float = 120.0,
+) -> Path | None:
+    if not info.asset_url:
+        return None
+
+    target_root = root or install_root()
+    if target_root is None:
+        return None
+
+    request = urllib.request.Request(
+        info.asset_url, headers={"User-Agent": "Wegstr-PCB-Slicer"}
+    )
+    context = ssl.create_default_context()
+    with urllib.request.urlopen(request, timeout=timeout, context=context) as response:
+        payload = response.read()
+
+    return extract_update(payload, target_root, info.version)
 
 
 def _pick_asset(release: dict[str, Any]) -> str | None:

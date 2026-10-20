@@ -23,6 +23,7 @@ _KEY_PROFILE = "job/profile"
 _KEY_VIEWER = "viewer"
 _KEY_THEME = "view/theme"
 _KEY_DENSITY = "view/density"
+_KEY_AUTO_UPDATE = "update/auto"
 _KEY_PRESETS = "job/presets"
 _KEY_TOOL_PRESETS = "tool/user_presets"
 _KEY_PANEL_HIDDEN = "view/panel_hidden"
@@ -144,6 +145,19 @@ class Preferences:
             return "comfortable" if str(value).lower() == "comfortable" else "compact"
         except Exception:
             return "compact"
+
+    def save_auto_update(self, value: bool) -> None:
+        try:
+            self.settings.setValue(_KEY_AUTO_UPDATE, bool(value))
+            self.settings.sync()
+        except Exception:
+            pass
+
+    def restore_auto_update(self) -> bool:
+        try:
+            return bool(self.settings.value(_KEY_AUTO_UPDATE, True, type=bool))
+        except Exception:
+            return True
 
     def save_presets(self, presets: dict) -> None:
         try:

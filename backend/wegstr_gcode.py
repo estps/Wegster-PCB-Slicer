@@ -398,11 +398,35 @@ def work_origin(
 ) -> tuple[float, float, bool]:
     if config.origin_mode == "custom":
         return (float(config.origin_custom_x), float(config.origin_custom_y), False)
-    if config.origin_mode != "pin_top_left" or board is None:
+
+    outline = getattr(board, "outline", None) if board is not None else None
+    bounds = outline.bounds if outline is not None else None
+
+    if config.origin_mode == "lower_left":
+        if bounds is None:
+            return (0.0, 0.0, False)
+        return (float(bounds[0]), float(bounds[1]), False)
+
+    if config.origin_mode == "center":
+        if bounds is None:
+            return (0.0, 0.0, False)
+        return (
+            (float(bounds[0]) + float(bounds[2])) / 2.0,
+            (float(bounds[1]) + float(bounds[3])) / 2.0,
+            False,
+        )
+
+    if config.origin_mode not in ("pin_top_left", "pin_right_drop") or board is None:
         return (0.0, 0.0, False)
     pins = getattr(board, "pins", None)
     if not pins:
         return (0.0, 0.0, False)
+
+    if config.origin_mode == "pin_right_drop":
+        right = max(pins, key=lambda pin: pin[0])
+        drop = max(0.0, float(config.alignment_pin_clearance))
+        return (float(right[0]), float(right[1]) - drop, True)
+
     ordered = sorted(pins, key=lambda pin: (pin[0], -pin[1]))
     pin = ordered[0]
     return (float(pin[0]), float(pin[1]), True)

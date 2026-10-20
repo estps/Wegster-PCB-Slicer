@@ -124,6 +124,9 @@ class SlicerConfig:
     enforce_envelope: bool = True
     auto_rotate: bool = True
     rotation: int = 0
+    board_place_manual: bool = False
+    board_x: float = 2.0
+    board_y: float = 2.0
     alignment_pins_auto: bool = True
     alignment_pin_span: float = 80.0
     alignment_pin_clearance: float = 5.0
@@ -204,7 +207,13 @@ class SlicerConfig:
         problems: list[str] = []
         if self.machine_x <= 0 or self.machine_y <= 0 or self.machine_z <= 0:
             problems.append("Machine envelope must be positive.")
-        if self.origin_mode not in ("lower_left", "center", "pin_top_left", "custom"):
+        if self.origin_mode not in (
+            "lower_left",
+            "center",
+            "pin_top_left",
+            "pin_right_drop",
+            "custom",
+        ):
             problems.append(f"Unknown origin mode {self.origin_mode!r}.")
         if self.isolation_enabled and self.isolation_passes < 1:
             problems.append("Isolation passes must be at least 1.")
@@ -824,6 +833,10 @@ def build_board(project: PcbProject, config: SlicerConfig) -> BoardGeometry:
             offset_x = axis_coordinate - source_width / 2.0
         elif axis_kind == "horizontal":
             offset_y = axis_coordinate - source_height / 2.0
+
+    if config.board_place_manual:
+        offset_x = float(config.board_x)
+        offset_y = float(config.board_y)
 
     shift_x = offset_x - minx
     shift_y = offset_y - miny

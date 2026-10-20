@@ -194,12 +194,12 @@ def test_gcode(archive: Path) -> None:
         ]
         check(bool(coords), f"found {len(coords)} XY moves")
         check(
-            all(0 <= x <= WEGSTR_LIGHT.work_x for x, _ in coords),
-            "all X moves inside the 140 mm envelope",
+            all(-1.0 <= x <= WEGSTR_LIGHT.work_x for x, _ in coords),
+            "all X moves inside the envelope (cut-out may sit one radius outside the board)",
         )
         check(
-            all(0 <= y <= WEGSTR_LIGHT.work_y for _, y in coords),
-            "all Y moves inside the 90 mm envelope",
+            all(-1.0 <= y <= WEGSTR_LIGHT.work_y for _, y in coords),
+            "all Y moves inside the envelope (cut-out may sit one radius outside the board)",
         )
 
         z_values = [
@@ -252,8 +252,14 @@ def test_verification(archive: Path) -> None:
         bounds = stats["xy_bounds"]
         check(bounds is not None, "verifier reported a toolpath envelope")
         if bounds:
-            check(bounds[0] >= -0.001, f"toolpath X min {bounds[0]:.3f} is not negative")
-            check(bounds[1] >= -0.001, f"toolpath Y min {bounds[1]:.3f} is not negative")
+            check(
+                bounds[0] >= -1.0,
+                f"toolpath X min {bounds[0]:.3f} is within the cut-out margin",
+            )
+            check(
+                bounds[1] >= -1.0,
+                f"toolpath Y min {bounds[1]:.3f} is within the cut-out margin",
+            )
             check(
                 bounds[2] <= WEGSTR_LIGHT.work_x + 0.001,
                 f"toolpath X max {bounds[2]:.3f} inside the envelope",
@@ -611,7 +617,10 @@ def test_gcode_reader(archive: Path) -> None:
         bounds = parsed.stats["bounds"]
         check(bounds is not None, "reported bounds")
         if bounds:
-            check(bounds[0] >= -0.001, "reader bounds are not negative")
+            check(
+                bounds[0] >= -1.0,
+                "reader bounds stay within the cut-out margin",
+            )
             check(
                 bounds[2] <= WEGSTR_LIGHT.work_x + 0.001,
                 "reader bounds inside the envelope",

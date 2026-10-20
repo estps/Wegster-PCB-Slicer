@@ -720,6 +720,7 @@ class MainWindow(QMainWindow):
         self.origin_combo.addItem("Lower-left corner", "lower_left")
         self.origin_combo.addItem("Board centre", "center")
         self.origin_combo.addItem("Top-left alignment pin (+Y down)", "pin_top_left")
+        self.origin_combo.addItem("Right pin, 5 mm below (+Y down)", "pin_right_drop")
         self.origin_combo.addItem("Picked point", "custom")
         self.origin_combo.currentIndexChanged.connect(
             lambda _: self._apply(
@@ -766,6 +767,29 @@ class MainWindow(QMainWindow):
         self.rotate_button.clicked.connect(self._rotate_board)
         card.add(self.rotate_button)
         self.rotation_stat = card.add_stat("Board rotation", "0°", theme.TEAL)
+
+        self._bind_toggle(
+            card, "Place board manually",
+            lambda: self.config.board_place_manual,
+            lambda v: setattr(self.config, "board_place_manual", v),
+        ).setToolTip(
+            "Off: the board sits at the margin, or centred on the flip axis when\n"
+            "alignment pins are on. On: use the Board X and Board Y position."
+        )
+        self._place_rows = [
+            self._bind_slider(
+                card, "Board X", 0.0, 140.0,
+                lambda: self.config.board_x,
+                lambda v: setattr(self.config, "board_x", v),
+                1, " mm",
+            ),
+            self._bind_slider(
+                card, "Board Y", 0.0, 200.0,
+                lambda: self.config.board_y,
+                lambda v: setattr(self.config, "board_y", v),
+                1, " mm",
+            ),
+        ]
         self._bind_toggle(
             card, "Front copper (top)",
             lambda: self.config.mill_top,
@@ -1671,6 +1695,8 @@ class MainWindow(QMainWindow):
             row.set_enabled(not self.config.alignment_pins_auto)
         for row in getattr(self, "_auto_pin_rows", []):
             row.set_enabled(self.config.alignment_pins_auto)
+        for row in getattr(self, "_place_rows", []):
+            row.set_enabled(self.config.board_place_manual)
         if hasattr(self, "rotation_stat"):
             self.rotation_stat.set_value(f"{int(self.config.rotation)}°")
         self.subtitle.setText(

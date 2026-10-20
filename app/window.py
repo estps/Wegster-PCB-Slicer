@@ -1281,17 +1281,22 @@ class MainWindow(QMainWindow):
             "Places the pins a fixed distance apart, clear of the board's top\n"
             "edge, with the board centred on the flip axis."
         )
-        self._bind_slider(
-            card, "Pin spacing", 20.0, 140.0,
-            lambda: self.config.alignment_pin_span,
-            lambda v: setattr(self.config, "alignment_pin_span", v),
-            1, " mm",
+        self._auto_pin_rows = []
+        self._auto_pin_rows.append(
+            self._bind_slider(
+                card, "Pin spacing", 20.0, 140.0,
+                lambda: self.config.alignment_pin_span,
+                lambda v: setattr(self.config, "alignment_pin_span", v),
+                1, " mm",
+            )
         )
-        self._bind_slider(
-            card, "Clearance above board", 0.0, 40.0,
-            lambda: self.config.alignment_pin_clearance,
-            lambda v: setattr(self.config, "alignment_pin_clearance", v),
-            1, " mm",
+        self._auto_pin_rows.append(
+            self._bind_slider(
+                card, "Clearance above board", 0.0, 40.0,
+                lambda: self.config.alignment_pin_clearance,
+                lambda v: setattr(self.config, "alignment_pin_clearance", v),
+                1, " mm",
+            )
         )
 
         card.add_label(
@@ -1609,6 +1614,8 @@ class MainWindow(QMainWindow):
         self.tool_diameter_row.set_enabled(not is_vbit)
         for row in getattr(self, "_pin_rows", []):
             row.set_enabled(not self.config.alignment_pins_auto)
+        for row in getattr(self, "_auto_pin_rows", []):
+            row.set_enabled(self.config.alignment_pins_auto)
         if hasattr(self, "rotation_stat"):
             self.rotation_stat.set_value(f"{int(self.config.rotation)}°")
         self.subtitle.setText(

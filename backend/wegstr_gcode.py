@@ -468,6 +468,9 @@ def emit_program(
     builder.set_units_and_mode()
     builder.comment(f"Lift to safe height {profile.tool_change_z:.2f} mm before moving")
     builder.rapid(z=profile.tool_change_z)
+    if (origin_x, origin_y) != (0.0, 0.0):
+        builder.comment("Move to the work origin before starting")
+        builder.rapid(x=origin_x, y=origin_y)
     builder.rapid(z=profile.rapid_z)
 
     if preamble:

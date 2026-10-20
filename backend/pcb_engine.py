@@ -1272,11 +1272,11 @@ def generate_edge_cut(
     if radius <= 0:
         raise SlicerError("Cut-out tool has zero cutting radius.")
 
-    centerline = _buffer(board, -radius, config.quad_segs)
+    centerline = _buffer(board, radius, config.quad_segs)
     if centerline is None:
         raise SlicerError(
-            "Board is too small for the selected cut-out tool "
-            f"(needs at least {2 * radius:.2f} mm in every direction)."
+            "Could not offset the board outline for the cut-out tool "
+            f"({2 * radius:.2f} mm diameter)."
         )
 
     polylines: list[Polyline] = []

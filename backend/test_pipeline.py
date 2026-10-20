@@ -1398,8 +1398,17 @@ def test_custom_origin(archive: Path) -> None:
                         ys.append(float(token[1:]))
                 except ValueError:
                     continue
-        check(min(xs) >= -0.001, f"X starts at zero (min {min(xs):.2f})")
-        check(max(ys) <= 0.001, f"Y runs down from the origin (max {max(ys):.2f})")
+        cut_radius = config.cutout_tool.radius_at_depth(config.cutout_depth)
+        check(
+            min(xs) >= -cut_radius - 0.01,
+            f"X stays within one cut-out radius of the origin "
+            f"(min {min(xs):.2f}, radius {cut_radius:.2f})",
+        )
+        check(
+            max(ys) <= cut_radius + 0.01,
+            f"Y stays within one cut-out radius above the origin "
+            f"(max {max(ys):.2f}, radius {cut_radius:.2f})",
+        )
         check(
             len(xs) > 0 and max(xs) - min(xs) > 1.0,
             f"the program spans {max(xs) - min(xs):.1f} mm in X",

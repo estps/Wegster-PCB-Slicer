@@ -1782,6 +1782,13 @@ class MainWindow(QMainWindow):
                 best = (cx, cy)
         return best
 
+    def _current_work_origin(self) -> tuple[float, float, bool]:
+        from wegstr_gcode import work_origin
+
+        board = self.plan.board if self.plan is not None else None
+        ox, oy, y_down = work_origin(self.config, board)
+        return (ox, oy, y_down)
+
     def _update_origin_marker(self) -> None:
         from wegstr_gcode import work_origin
 
@@ -2273,8 +2280,12 @@ class MainWindow(QMainWindow):
         self.scrubber.blockSignals(True)
         self.scrubber.setValue(self.scrubber.maximum())
         self.scrubber.blockSignals(False)
+        ox, oy, y_down = self._current_work_origin()
         self.viewer.set_program(
-            self.program, (self.profile.work_x, self.profile.work_y)
+            self.program,
+            (self.profile.work_x, self.profile.work_y),
+            (ox, oy),
+            y_down,
         )
         self.viewer.fit()
         self.transport.setVisible(True)

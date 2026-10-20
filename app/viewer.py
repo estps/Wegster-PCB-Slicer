@@ -135,9 +135,20 @@ class ToolpathView(QGraphicsView):
         self._progress = 1.0
         self._progress_index = 0
 
-    def set_program(self, program, machine: tuple[float, float]) -> None:
+    def set_program(
+        self,
+        program,
+        machine: tuple[float, float],
+        origin: tuple[float, float] = (0.0, 0.0),
+        y_down: bool = False,
+    ) -> None:
         self.set_machine(machine)
         flip = machine[1]
+        ox, oy = float(origin[0]), float(origin[1])
+
+        def to_scene(x: float, y: float) -> tuple[float, float]:
+            my = oy - y if y_down else oy + y
+            return x + ox, flip - my
 
         by_depth: dict[float, list[tuple[int, QLineF]]] = {}
         plunges_by_depth: dict[float, list[tuple[int, QPointF]]] = {}
@@ -151,13 +162,14 @@ class ToolpathView(QGraphicsView):
             )
             if not lateral:
                 if not segment.rapid and segment.cutting:
+                    sx, sy = to_scene(segment.x1, segment.y1)
                     plunges_by_depth.setdefault(round(segment.z1, 3), []).append(
-                        (segment.index, QPointF(segment.x1, flip - segment.y1))
+                        (segment.index, QPointF(sx, sy))
                     )
                 continue
-            line = QLineF(
-                segment.x0, flip - segment.y0, segment.x1, flip - segment.y1
-            )
+            x0, y0 = to_scene(segment.x0, segment.y0)
+            x1, y1 = to_scene(segment.x1, segment.y1)
+            line = QLineF(x0, y0, x1, y1)
             if segment.rapid:
                 rapid_lines.append(line)
                 rapid_indices.append(segment.index)

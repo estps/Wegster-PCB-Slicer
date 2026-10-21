@@ -899,13 +899,24 @@ def build_board(project: PcbProject, config: SlicerConfig) -> BoardGeometry:
                 continue
             store[side] = flip(geom, side)
 
+    mirror_holes = (
+        bool(config.mirror_bottom)
+        and bool(config.alignment_holes)
+        and project.layer(LayerType.TOP_COPPER) is None
+    )
+
     holes = []
     for hole in project.all_holes:
         hx, hy = _rotate_point(hole.x, hole.y, rotation)
+        hx += shift_x
+        hy += shift_y
+        if mirror_holes:
+            reflected = reflect_about_pin_axis(Point(hx, hy), *pins)
+            hx, hy = reflected.x, reflected.y
         holes.append(
             DrillHit(
-                x=hx + shift_x,
-                y=hy + shift_y,
+                x=hx,
+                y=hy,
                 diameter=hole.diameter,
                 plated=hole.plated,
             )
@@ -1314,7 +1325,9 @@ def generate_edge_cut(
         is_outer = index == 0
         if config.tab_enabled and config.tab_count > 0 and is_outer and config.tab_width > 0:
             positions = _choose_tab_positions(ring, config.tab_count, config.tab_width)
-            pieces = _apply_tabs(ring, positions, config.tab_width)
+            pieces = _apply_tabs(
+                ring, positions, config.tab_width + 2.0 * radius
+            )
             for piece in pieces:
                 if len(piece) >= 2:
                     polyline = Polyline(piece, closed=False, kind="cutout")
